@@ -1,208 +1,263 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { mockFindings, type Finding } from '@/lib/mock-data';
 import { useAppStore } from '@/lib/store';
-import { Bot, Send, Trash2, Copy, Terminal, Code2, ChevronRight, Zap } from 'lucide-react';
+import { mockFindings, type Finding } from '@/lib/mock-data';
+import {
+    Send, Bot, User, Trash2, Shield, Search,
+    Sparkles, Terminal, ChevronRight, Zap, Info, ShieldAlert
+} from 'lucide-react';
 import clsx from 'clsx';
 
-const sevColors: Record<string, string> = {
-    critical: '#FF6B6B', high: '#F2994A', medium: '#F7D228', low: '#27AE60',
-};
-
-// Mock AI response generator
-function generateAIResponse(userMsg: string, finding: Finding | null): string {
-    const f = finding;
-    if (!f) {
-        if (userMsg.toLowerCase().includes('hello') || userMsg.toLowerCase().includes('hi')) {
-            return "Hello! I'm ready to help with security remediation. Select a finding from the list on the left to get specific guidance, or ask me anything about cloud security!";
-        }
-        return `I'd be happy to help! For the most accurate remediation guidance, I recommend selecting a specific finding from the panel on the left. That way I can provide:\n\n- **Contextual risk assessment** specific to your environment\n- **Step-by-step remediation commands** (CLI, Terraform, or console)\n- **Compliance impact analysis** (HIPAA/NIST/ISO)\n- **Verification steps** to confirm the fix\n\nYou can also ask me general questions like:\n- "What is CVE-2024-21626?"\n- "How do I harden an S3 bucket?"\n- "Explain IAM least-privilege principle"`;
-    }
-
-    return `## 🛡️ AI Analysis: ${f.title}\n\n**Risk Score:** ${f.riskScore}/10 | **Severity:** ${f.severity.toUpperCase()} | **CVSS:** ${f.cvssScore ?? 'N/A'}\n\n### Root Cause\n${f.description}\n\n### Compliance Impact\n${f.framework.map(fw => `- **${fw.toUpperCase()}**: This finding directly affects compliance with ${fw === 'hipaa' ? 'Section 164.312' : fw === 'nist' ? 'AC-3, SI-2 controls' : 'Annex A.12.6.1'}`).join('\n')}\n\n### Remediation Priority\nThis issue should be addressed **${f.riskScore >= 9 ? 'immediately (P0)' : f.riskScore >= 7 ? 'within 24-48 hours (P1)' : 'within this sprint (P2)'}** to prevent potential ${f.riskScore >= 9 ? 'breach or data exposure' : 'policy violations'}.\n\n### Verification Steps\nAfter applying the fix:\n1. Re-run CloudShield scan on the affected resource\n2. Confirm the finding status changes to "Resolved"\n3. Review audit logs for any unauthorized access during the exposure window\n4. Update your incident log with remediation evidence\n\n> 💡 **Tip:** Use the code snippets below the finding in the Scan Results view to copy exact remediation commands.`;
-}
-
-function renderMarkdown(text: string) {
-    return text
-        .replace(/^## (.+)$/gm, '<h3 class="font-bold text-sm mt-3 mb-1" style="color:var(--text)">$1</h3>')
-        .replace(/^### (.+)$/gm, '<h4 class="font-semibold text-xs mt-2 mb-1" style="color:var(--text)">$1</h4>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--text)">$1</strong>')
-        .replace(/^- (.+)$/gm, '<li class="text-xs ml-3 mb-0.5 list-disc" style="color:var(--text-muted)">$1</li>')
-        .replace(/^> 💡 (.+)$/gm, '<div class="badge-info text-xs px-3 py-1.5 rounded-lg mt-2">💡 $1</div>')
-        .replace(/\n/g, '<br/>');
-}
-
 export default function AssistantPage() {
-    const { chatMessages, addChatMessage, clearChat, selectedFinding, setSelectedFinding, addToast } = useAppStore();
+    const {
+        selectedFindings,
+        toggleFindingSelection,
+        chatMessages,
+        addMessage,
+        clearMessages
+    } = useAppStore();
+
     const [input, setInput] = useState('');
-    const [loading, setLoading] = useState(false);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const [isTyping, setIsTyping] = useState(false);
+    const [search, setSearch] = useState('');
+    const scrollRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [chatMessages]);
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [chatMessages, isTyping]);
 
-    const sendMessage = async () => {
-        const msg = input.trim();
-        if (!msg || loading) return;
+    const filteredFindings = mockFindings.filter(f =>
+        f.title.toLowerCase().includes(search.toLowerCase()) ||
+        f.resource.toLowerCase().includes(search.toLowerCase()) ||
+        f.mitre?.id.toLowerCase().includes(search.toLowerCase())
+    );
+
+    const handleSend = () => {
+        if (!input.trim()) return;
+
+        const userMsg = input;
         setInput('');
-        addChatMessage('user', msg);
-        setLoading(true);
-        await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
-        const reply = generateAIResponse(msg, selectedFinding);
-        addChatMessage('assistant', reply);
-        setLoading(false);
+        addMessage({ role: 'user', content: userMsg });
+
+        setIsTyping(true);
+        // Realistic AI response delay
+        setTimeout(() => {
+            setIsTyping(false);
+            const response = getAIResponse(userMsg, selectedFindings);
+            addMessage({ role: 'assistant', content: response });
+        }, 1500);
     };
 
-    const openFindings = mockFindings.filter(f => f.status !== 'resolved').slice(0, 8);
-
     return (
-        <div className="max-w-7xl mx-auto flex gap-5 h-[calc(100vh-124px)] animate-fade-in">
+        <div className="flex h-[calc(100vh-140px)] gap-6 animate-fade-in">
 
-            {/* Finding selector */}
-            <aside className="w-64 flex-shrink-0 rounded-2xl border overflow-hidden flex flex-col" style={{ background: 'var(--card)', borderColor: 'var(--border)' }}>
-                <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
-                    <h2 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Select Finding</h2>
-                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Get contextual AI guidance</p>
+            {/* Intel Selector Sidebar */}
+            <aside className="w-80 flex flex-col gap-4">
+                <div className="flex-1 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col overflow-hidden">
+                    <div className="p-4 border-b border-slate-800 bg-slate-900/60">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-[11px] font-black text-white uppercase tracking-widest flex items-center gap-2">
+                                <Search size={14} className="text-sky-400" />
+                                CONTEXT INGESTION
+                            </h3>
+                            <span className="text-[10px] font-bold text-sky-500 bg-sky-500/10 px-2 rounded-full border border-sky-500/20 uppercase tracking-tighter">
+                                {selectedFindings.length} LOADED
+                            </span>
+                        </div>
+                        <div className="relative group">
+                            <Search className="absolute left-3 top-2.5 text-slate-500 group-focus-within:text-sky-400 transition-colors" size={14} />
+                            <input
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                placeholder="INTEL SEARCH..."
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 pl-9 pr-3 text-[10px] font-bold text-white uppercase tracking-wider focus:border-sky-500/50 outline-none transition-all"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                        {filteredFindings.map((f) => {
+                            const selected = selectedFindings.includes(f.id);
+                            return (
+                                <button
+                                    key={f.id}
+                                    onClick={() => toggleFindingSelection(f.id)}
+                                    className={clsx(
+                                        "w-full text-left p-3 rounded-lg border transition-all relative group overflow-hidden",
+                                        selected
+                                            ? "border-sky-500/50 bg-sky-500/5"
+                                            : "border-slate-800 bg-slate-950 hover:border-slate-700 hover:bg-slate-900/50"
+                                    )}
+                                >
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <span className={clsx("text-[9px] font-black uppercase tracking-widest", `text-severity-${f.severity}`)} style={{ color: f.severity === 'critical' ? '#ef4444' : f.severity === 'high' ? '#f59e0b' : '#38bdf8' }}>
+                                            {f.severity}
+                                        </span>
+                                        {selected && <Shield size={12} className="text-sky-400 animate-glow" />}
+                                    </div>
+                                    <div className="text-[11px] font-bold text-slate-100 mb-1 truncate">{f.title}</div>
+                                    <div className="text-[9px] font-mono text-slate-500 truncate">{f.resource}</div>
+                                    {f.mitre && (
+                                        <div className="mt-2 text-[8px] font-bold text-sky-500/80 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 w-fit uppercase">
+                                            {f.mitre.id}: {f.mitre.technique}
+                                        </div>
+                                    )}
+                                    {selected && <div className="absolute left-0 top-0 bottom-0 w-1 bg-sky-500 shadow-[0_0_10px_rgba(56,189,248,0.5)]" />}
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                    <button
-                        onClick={() => setSelectedFinding(null)}
-                        className={clsx('w-full text-left px-3 py-2 rounded-lg text-xs transition-all hover:opacity-80', !selectedFinding ? 'font-semibold' : '')}
-                        style={{
-                            background: !selectedFinding ? 'rgba(45,156,219,0.15)' : 'transparent',
-                            color: !selectedFinding ? '#2D9CDB' : 'var(--text-muted)',
-                            border: !selectedFinding ? '1px solid rgba(45,156,219,0.3)' : '1px solid transparent',
-                        }}
-                    >
-                        <Zap size={11} className="inline mr-1.5" />
-                        General Questions
-                    </button>
-                    {openFindings.map(f => (
-                        <button
-                            key={f.id}
-                            onClick={() => {
-                                setSelectedFinding(f);
-                                addChatMessage('user', `Analyze and provide remediation for: ${f.title}`);
-                                setLoading(true);
-                                setTimeout(() => {
-                                    addChatMessage('assistant', generateAIResponse('analyze', f));
-                                    setLoading(false);
-                                }, 1400);
-                            }}
-                            className={clsx('w-full text-left px-3 py-2.5 rounded-lg transition-all hover:opacity-80 border', selectedFinding?.id === f.id ? '' : 'border-transparent')}
-                            style={{
-                                background: selectedFinding?.id === f.id ? 'var(--bg)' : 'transparent',
-                                borderColor: selectedFinding?.id === f.id ? sevColors[f.severity] + '44' : 'transparent',
-                            }}
-                        >
-                            <div className="flex items-center gap-1.5 mb-1">
-                                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: sevColors[f.severity] }} />
-                                <span className="text-xs capitalize font-medium" style={{ color: sevColors[f.severity] }}>{f.severity}</span>
-                                <span className="ml-auto text-xs font-bold" style={{ color: sevColors[f.severity] }}>{f.riskScore}</span>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Capabilities</div>
+                    <div className="space-y-2">
+                        {[
+                            { label: 'IAC REMEDIATION', icon: Zap },
+                            { label: 'THREAT CORRELATION', icon: ShieldAlert },
+                            { label: 'ATT&CK MAPPING', icon: Terminal },
+                        ].map((c, i) => (
+                            <div key={i} className="flex items-center gap-2 text-[9px] font-bold text-slate-400 uppercase">
+                                <c.icon size={12} className="text-sky-400" />
+                                {c.label}
                             </div>
-                            <p className="text-xs leading-tight" style={{ color: 'var(--text)' }}>{f.title}</p>
-                        </button>
-                    ))}
+                        ))}
+                    </div>
                 </div>
             </aside>
 
-            {/* Chat panel */}
-            <div className="flex-1 rounded-2xl border flex flex-col overflow-hidden" style={{ background: 'var(--card)', borderColor: 'var(--border)' }}>
+            {/* Copilot Chat Interface */}
+            <main className="flex-1 flex flex-col rounded-xl border border-slate-800 bg-slate-900/20 overflow-hidden shadow-2xl backdrop-blur-sm relative">
 
-                {/* Chat header */}
-                <div className="flex items-center justify-between px-5 py-3 border-b" style={{ background: 'var(--primary)', borderColor: 'rgba(255,255,255,0.08)' }}>
-                    <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(45,156,219,0.3)' }}>
-                            <Bot size={16} className="text-[#4FC3F7]" />
+                {/* Copilot Header */}
+                <div className="px-6 py-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-sky-500 flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.3)] animate-glow">
+                            <Bot size={22} className="text-slate-950" />
                         </div>
                         <div>
-                            <p className="text-sm font-semibold text-white">CloudShield AI</p>
-                            <p className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                                {selectedFinding ? `Analyzing: ${selectedFinding.title.slice(0, 40)}…` : 'Ready to assist'}
-                            </p>
+                            <div className="flex items-center gap-2">
+                                <h2 className="text-sm font-black text-white uppercase tracking-widest">Security Copilot v2.4</h2>
+                                <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-widest border border-emerald-500/20">Active</span>
+                            </div>
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter mt-0.5">Automated Intelligence & Remediation Engine</p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-[#27AE60] animate-pulse-slow" />
-                        <span className="text-xs text-white/50">Online</span>
-                        <button onClick={clearChat} className="ml-2 text-white/30 hover:text-white/60 transition-colors" title="Clear chat">
-                            <Trash2 size={14} />
-                        </button>
-                    </div>
+                    <button
+                        onClick={clearMessages}
+                        className="text-slate-500 hover:text-red-400 transition-colors p-2 rounded hover:bg-red-400/5 group"
+                        title="Clear Intel History"
+                    >
+                        <Trash2 size={16} className="group-hover:scale-110 transition-transform" />
+                    </button>
                 </div>
 
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {chatMessages.map((msg, i) => (
-                        <div key={i} className={clsx('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
-                            {msg.role === 'assistant' && (
-                                <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mr-2 mt-1" style={{ background: 'rgba(45,156,219,0.2)' }}>
-                                    <Bot size={14} className="text-[#4FC3F7]" />
-                                </div>
-                            )}
-                            <div
-                                className={clsx('max-w-[75%] px-4 py-3 rounded-2xl text-xs leading-relaxed', msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm')}
-                                style={{
-                                    background: msg.role === 'user' ? 'linear-gradient(135deg, #2D9CDB, #1a6fa8)' : 'var(--bg)',
-                                    color: msg.role === 'user' ? 'white' : 'var(--text)',
-                                    border: msg.role === 'assistant' ? '1px solid var(--border)' : 'none',
-                                }}
-                            >
-                                {msg.role === 'assistant' ? (
-                                    <div dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
-                                ) : (
-                                    <p>{msg.content}</p>
-                                )}
-                                <p className="text-xs mt-1.5 opacity-50">
-                                    {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </p>
+                {/* Messages Feed */}
+                <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth bg-cyber-grid">
+                    {chatMessages.length === 0 && (
+                        <div className="h-full flex flex-col items-center justify-center text-center p-10">
+                            <Sparkles size={48} className="text-slate-800 mb-6" />
+                            <h3 className="text-xl font-bold text-slate-300 mb-2 uppercase tracking-wide">Ready for Security Ingestion</h3>
+                            <p className="text-slate-500 max-w-sm text-xs font-medium leading-relaxed">
+                                Select findings from the left panel to load context, then ask me to generate remediation plans,
+                                explain MITRE tactics, or correlate telemetry.
+                            </p>
+                        </div>
+                    )}
+                    {chatMessages.map((m, i) => (
+                        <div key={i} className={clsx("flex gap-4 animate-fade-in", m.role === 'user' ? "flex-row-reverse" : "flex-row")}>
+                            <div className={clsx(
+                                "w-9 h-9 rounded flex items-center justify-center flex-shrink-0 border shadow-lg",
+                                m.role === 'user' ? "bg-slate-800 border-slate-700 text-sky-400" : "bg-sky-500 border-sky-400 text-slate-950"
+                            )}>
+                                {m.role === 'user' ? <User size={18} /> : <Bot size={18} />}
+                            </div>
+                            <div className={clsx(
+                                "max-w-[85%] rounded-xl px-5 py-4 shadow-xl relative",
+                                m.role === 'user'
+                                    ? "bg-slate-800/80 text-white border border-slate-700 rounded-tr-none"
+                                    : "bg-slate-950/80 text-slate-200 border border-sky-500/20 rounded-tl-none font-medium leading-relaxed text-sm glass"
+                            )}>
+                                {m.content.split('\n').map((line, li) => (
+                                    <p key={li} className={clsx(line.startsWith('-') || line.startsWith('  ') ? "ml-4" : "mb-2")}>
+                                        {line}
+                                    </p>
+                                ))}
                             </div>
                         </div>
                     ))}
-                    {loading && (
-                        <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: 'rgba(45,156,219,0.2)' }}>
-                                <Bot size={14} className="text-[#4FC3F7]" />
+                    {isTyping && (
+                        <div className="flex gap-4 animate-fade-in">
+                            <div className="w-9 h-9 rounded bg-sky-500 border border-sky-400 flex items-center justify-center text-slate-950 shadow-lg">
+                                <Bot size={18} />
                             </div>
-                            <div className="px-4 py-3 rounded-2xl rounded-tl-sm" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
-                                <div className="flex gap-1.5">
-                                    {[0, 1, 2].map(i => (
-                                        <span key={i} className="w-1.5 h-1.5 rounded-full bg-[#2D9CDB] animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-                                    ))}
-                                </div>
+                            <div className="bg-slate-950/80 border border-sky-500/10 rounded-xl rounded-tl-none px-5 py-4 flex gap-1.5 items-center shadow-xl glass">
+                                <div className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+                                <div className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                                <div className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-bounce" style={{ animationDelay: '300ms' }} />
                             </div>
                         </div>
                     )}
-                    <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input */}
-                <div className="p-4 border-t" style={{ borderColor: 'var(--border)' }}>
-                    <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl border" style={{ background: 'var(--bg)', borderColor: 'var(--border)' }}>
+                {/* Command Input */}
+                <div className="p-6 border-t border-slate-800 bg-slate-900/40">
+                    <div className="relative flex items-center">
                         <input
+                            type="text"
                             value={input}
-                            onChange={e => setInput(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-                            placeholder="Ask about vulnerabilities, remediation steps, compliance impact..."
-                            className="flex-1 text-sm bg-transparent outline-none"
-                            style={{ color: 'var(--text)' }}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                            placeholder={selectedFindings.length === 0 ? "SELECT FINDINGS TO START ANALYSIS..." : "ASK COPILOT FOR REMEDIATION INTEL..."}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-4 pl-5 pr-14 text-sm font-medium text-white placeholder:text-slate-600 focus:border-sky-500/50 focus:ring-1 focus:ring-sky-500/20 outline-none transition-all shadow-inner"
                         />
                         <button
-                            onClick={sendMessage}
-                            disabled={!input.trim() || loading}
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all hover:opacity-80 disabled:opacity-30"
-                            style={{ background: 'linear-gradient(135deg, #2D9CDB, #1a6fa8)' }}
+                            onClick={handleSend}
+                            disabled={!input.trim() || isTyping}
+                            className="absolute right-3 p-2.5 rounded-lg bg-sky-500 text-slate-950 hover:bg-sky-400 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-600 transition-all shadow-[0_0_10px_rgba(56,189,248,0.2)]"
                         >
-                            <Send size={14} />
+                            <Send size={18} />
                         </button>
                     </div>
-                    <p className="text-xs mt-2 text-center" style={{ color: 'var(--text-muted)' }}>
-                        AI responses are generated for demonstration. Always verify commands before executing in production.
-                    </p>
+                    <div className="flex items-center gap-4 mt-3 px-1">
+                        <div className="flex items-center gap-1 text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none">
+                            <Info size={10} />
+                            AI Insights use RAG on localized intel.
+                        </div>
+                        <div className="flex items-center gap-1 text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none">
+                            <Zap size={10} className="text-amber-500" />
+                            Accelerator: GPT-4o-Turbo
+                        </div>
+                    </div>
                 </div>
-            </div>
+            </main>
         </div>
     );
+}
+
+// ─── Logic ───────────────────────────────────────────────────────────────────
+
+function getAIResponse(input: string, selectedIds: string[]): string {
+    const findings = mockFindings.filter(f => selectedIds.includes(f.id));
+
+    if (findings.length === 0) {
+        return "⚠️ INTEL DEFICIT: Please select one or more findings from the 'Context Ingestion' panel for a targeted analysis.";
+    }
+
+    if (input.toLowerCase().includes('remediate') || input.toLowerCase().includes('fix')) {
+        let resp = "🛡️ GENERATING STRATEGIC REMEDIATION PLAN...\n\n";
+        findings.forEach(f => {
+            resp += `>>> ANALYSIS: ${f.title.toUpperCase()}\n`;
+            resp += `- SEVERITY: ${f.severity.toUpperCase()} (Risk Score: ${f.riskScore})\n`;
+            if (f.mitre) resp += `- MITRE ALIGNMENT: ${f.mitre.id} (${f.mitre.technique})\n`;
+            resp += `- REMEDIATION:\n  ${f.remediationCommand || 'Manual inspection required.'}\n\n`;
+        });
+        resp += "### SYSTEM RECOMMENDATION\nExecute the above CLI payloads in the order presented. Post-remediation scan is mandatory.";
+        return resp;
+    }
+
+    return `I have ingested intel for ${findings.length} findings. Based on current telemetry:\n\n- Primary Vector: ${findings[0].resourceType.toUpperCase()}\n- Aggregate Risk: ${(findings.reduce((acc, f) => acc + f.riskScore, 0) / findings.length).toFixed(1)}\n\nWhat specific diagnostic or iAC manifest would you like me to generate?`;
 }
