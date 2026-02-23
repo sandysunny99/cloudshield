@@ -20,9 +20,10 @@ interface AppState {
     sidebarOpen: boolean;
     toggleSidebar: () => void;
 
-    // Selected finding
-    selectedFinding: Finding | null;
-    setSelectedFinding: (f: Finding | null) => void;
+    // Selection
+    selectedFindings: string[];
+    toggleFindingSelection: (id: string) => void;
+    clearSelectedFindings: () => void;
 
     // Filters
     filters: FilterState;
@@ -36,8 +37,8 @@ interface AppState {
 
     // AI Chat
     chatMessages: { role: 'user' | 'assistant'; content: string; timestamp: Date }[];
-    addChatMessage: (role: 'user' | 'assistant', content: string) => void;
-    clearChat: () => void;
+    addMessage: (message: { role: 'user' | 'assistant'; content: string }) => void;
+    clearMessages: () => void;
 }
 
 const defaultFilters: FilterState = {
@@ -57,9 +58,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     sidebarOpen: true,
     toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
 
-    // Finding
-    selectedFinding: null,
-    setSelectedFinding: (f) => set({ selectedFinding: f }),
+    // Selection
+    selectedFindings: [],
+    toggleFindingSelection: (id) => set((s) => ({
+        selectedFindings: s.selectedFindings.includes(id)
+            ? s.selectedFindings.filter((i) => i !== id)
+            : [...s.selectedFindings, id],
+    })),
+    clearSelectedFindings: () => set({ selectedFindings: [] }),
 
     // Filters
     filters: defaultFilters,
@@ -77,10 +83,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Chat
     chatMessages: [
-        { role: 'assistant', content: "Hello! I'm **CloudShield AI**, your security remediation assistant. I can help you understand vulnerabilities, generate remediation commands, and assess compliance impact.\n\n**Try asking:**\n- \"How do I fix the runc vulnerability?\"\n- \"What's the HIPAA impact of the S3 finding?\"\n- \"Generate a Terraform snippet for the IAM fix\"\n\nOr select a finding from the list to get contextual guidance.", timestamp: new Date() },
+        { role: 'assistant', content: "SYSTEM: Sentinel Copilot Online. Analyzing fleet telemetry...\n\nI am your **Security Copilot**. Select findings for context ingestion or ask me to correlate telemetry.", timestamp: new Date() },
     ],
-    addChatMessage: (role, content) => set((s) => ({
-        chatMessages: [...s.chatMessages, { role, content, timestamp: new Date() }],
+    addMessage: (msg) => set((s) => ({
+        chatMessages: [...s.chatMessages, { ...msg, timestamp: new Date() }],
     })),
-    clearChat: () => set({ chatMessages: [] }),
+    clearMessages: () => set({ chatMessages: [] }),
 }));

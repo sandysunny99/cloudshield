@@ -1,200 +1,170 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { useAppStore } from '@/lib/store';
-import { mockFindings, type Finding } from '@/lib/mock-data';
 import {
-    Send, Bot, User, Trash2, Shield, Search,
-    Sparkles, Terminal, ChevronRight, Zap, Info, ShieldAlert
+    Bot, Send, User, Sparkles, Terminal, Shield,
+    CheckCircle2, History, Cpu, Globe, Lock,
+    Workflow, Zap, Code, Info
 } from 'lucide-react';
+import { mockFindings } from '@/lib/mock-data';
+import { useAppStore } from '@/lib/store';
 import clsx from 'clsx';
 
-export default function AssistantPage() {
-    const {
-        selectedFindings,
-        toggleFindingSelection,
-        chatMessages,
-        addMessage,
-        clearMessages
-    } = useAppStore();
+type AssistantMode = 'remediation' | 'investigation';
 
-    const [input, setInput] = useState('');
+export default function SecurityCopilot() {
+    const { chatMessages, addMessage, selectedFindings, toggleFindingSelection, clearMessages } = useAppStore();
+    const [inputValue, setInputValue] = useState('');
     const [isTyping, setIsTyping] = useState(false);
-    const [search, setSearch] = useState('');
+    const [mode, setMode] = useState<AssistantMode>('remediation');
     const scrollRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [chatMessages, isTyping]);
+    }, [chatMessages]);
 
-    const filteredFindings = mockFindings.filter(f =>
-        f.title.toLowerCase().includes(search.toLowerCase()) ||
-        f.resource.toLowerCase().includes(search.toLowerCase()) ||
-        f.mitre?.id.toLowerCase().includes(search.toLowerCase())
-    );
+    const activeFindings = mockFindings.filter(f => selectedFindings.includes(f.id));
 
-    const handleSend = () => {
-        if (!input.trim()) return;
+    const handleSend = async () => {
+        if (!inputValue.trim()) return;
 
-        const userMsg = input;
-        setInput('');
+        const userMsg = inputValue;
+        setInputValue('');
         addMessage({ role: 'user', content: userMsg });
-
         setIsTyping(true);
-        // Realistic AI response delay
+
         setTimeout(() => {
-            setIsTyping(false);
-            const response = getAIResponse(userMsg, selectedFindings);
+            let response = "";
+            if (activeFindings.length > 0) {
+                const finding = activeFindings[0];
+                response = `**[SENTINEL-COPILOT-2.0] Analyzing Context...**\n\nI have ingested context for **${finding.resource}**. \n\n**REMEDIATION PLAN (DEEPSEEK-INGESTED):**\nThe vulnerability **${finding.title}** (${finding.id}) suggests ${finding.severity === 'critical' ? 'immediate isolation' : 'a standard patch'}.\n\n\`\`\`bash\n# DeepSeek Recommended Patch\n${finding.remediationCommand || "kubectl patch deployment " + finding.resource + " --type='json' -p='[{\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/0/image\", \"value\":\"secured-image:v2\"}]' "}\n\`\`\`\n\n**VERIFICATION:**\nOnce applied, run \`check-compliance --finding ${finding.id}\` to verify closure.`;
+            } else {
+                response = "I am standing by. Please select findings from the **Context Engine** or provide a system query for analysis (e.g., 'How do I harden my EKS cluster?').";
+            }
+
             addMessage({ role: 'assistant', content: response });
+            setIsTyping(false);
         }, 1500);
     };
 
     return (
-        <div className="flex h-[calc(100vh-140px)] gap-6 animate-fade-in">
+        <div className="flex flex-col lg:flex-row h-[calc(100vh-140px)] gap-6 animate-fade-in font-inter">
 
-            {/* Intel Selector Sidebar */}
-            <aside className="w-80 flex flex-col gap-4">
-                <div className="flex-1 rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col overflow-hidden">
-                    <div className="p-4 border-b border-slate-800 bg-slate-900/60">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-[11px] font-black text-white uppercase tracking-widest flex items-center gap-2">
-                                <Search size={14} className="text-sky-400" />
-                                CONTEXT INGESTION
-                            </h3>
-                            <span className="text-[10px] font-bold text-sky-500 bg-sky-500/10 px-2 rounded-full border border-sky-500/20 uppercase tracking-tighter">
-                                {selectedFindings.length} LOADED
-                            </span>
-                        </div>
-                        <div className="relative group">
-                            <Search className="absolute left-3 top-2.5 text-slate-500 group-focus-within:text-sky-400 transition-colors" size={14} />
-                            <input
-                                value={search}
-                                onChange={e => setSearch(e.target.value)}
-                                placeholder="INTEL SEARCH..."
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 pl-9 pr-3 text-[10px] font-bold text-white uppercase tracking-wider focus:border-sky-500/50 outline-none transition-all"
-                            />
-                        </div>
+            {/* Context Panel */}
+            <div className="w-full lg:w-80 flex flex-col gap-4 flex-shrink-0">
+                <div className="flex-1 flex flex-col rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden glass shadow-xl">
+                    <div className="p-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
+                        <span className="text-[10px] font-black text-sky-400 font-mono tracking-widest flex items-center gap-2">
+                            <Workflow size={14} /> CONTEXT ENGINE
+                        </span>
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                     </div>
 
-                    <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                        {filteredFindings.map((f) => {
-                            const selected = selectedFindings.includes(f.id);
-                            return (
-                                <button
-                                    key={f.id}
-                                    onClick={() => toggleFindingSelection(f.id)}
-                                    className={clsx(
-                                        "w-full text-left p-3 rounded-lg border transition-all relative group overflow-hidden",
-                                        selected
-                                            ? "border-sky-500/50 bg-sky-500/5"
-                                            : "border-slate-800 bg-slate-950 hover:border-slate-700 hover:bg-slate-900/50"
-                                    )}
-                                >
-                                    <div className="flex items-center justify-between mb-1.5">
-                                        <span className={clsx("text-[9px] font-black uppercase tracking-widest", `text-severity-${f.severity}`)} style={{ color: f.severity === 'critical' ? '#ef4444' : f.severity === 'high' ? '#f59e0b' : '#38bdf8' }}>
-                                            {f.severity}
-                                        </span>
-                                        {selected && <Shield size={12} className="text-sky-400 animate-glow" />}
-                                    </div>
-                                    <div className="text-[11px] font-bold text-slate-100 mb-1 truncate">{f.title}</div>
-                                    <div className="text-[9px] font-mono text-slate-500 truncate">{f.resource}</div>
-                                    {f.mitre && (
-                                        <div className="mt-2 text-[8px] font-bold text-sky-500/80 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 w-fit uppercase">
-                                            {f.mitre.id}: {f.mitre.technique}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                        <div>
+                            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3 block">Available Context ({selectedFindings.length})</span>
+                            <div className="space-y-2">
+                                {mockFindings.slice(0, 8).map(f => (
+                                    <button
+                                        key={f.id}
+                                        onClick={() => toggleFindingSelection(f.id)}
+                                        className={clsx(
+                                            "w-full p-3 rounded-lg border text-left transition-all group relative overflow-hidden",
+                                            selectedFindings.includes(f.id)
+                                                ? "bg-sky-500/10 border-sky-500/40"
+                                                : "bg-slate-950/40 border-slate-800 hover:border-slate-700"
+                                        )}
+                                    >
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <span className={clsx("text-[9px] font-black px-1.5 rounded uppercase border", `badge-${f.severity}`)}>{f.severity}</span>
+                                            {selectedFindings.includes(f.id) && <CheckCircle2 size={12} className="text-sky-400" />}
                                         </div>
-                                    )}
-                                    {selected && <div className="absolute left-0 top-0 bottom-0 w-1 bg-sky-500 shadow-[0_0_10px_rgba(56,189,248,0.5)]" />}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Capabilities</div>
-                    <div className="space-y-2">
-                        {[
-                            { label: 'IAC REMEDIATION', icon: Zap },
-                            { label: 'THREAT CORRELATION', icon: ShieldAlert },
-                            { label: 'ATT&CK MAPPING', icon: Terminal },
-                        ].map((c, i) => (
-                            <div key={i} className="flex items-center gap-2 text-[9px] font-bold text-slate-400 uppercase">
-                                <c.icon size={12} className="text-sky-400" />
-                                {c.label}
+                                        <div className="text-[11px] font-bold text-slate-200 truncate group-hover:text-white">{f.title}</div>
+                                        <div className="text-[9px] font-mono text-slate-600 mt-1 uppercase tracking-tighter">{f.resource}</div>
+                                    </button>
+                                ))}
                             </div>
-                        ))}
+                        </div>
+
+                        {activeFindings.length > 0 && (
+                            <div className="pt-4 border-t border-slate-800 animate-fade-in">
+                                <span className="text-[9px] font-bold text-sky-500 uppercase tracking-widest mb-3 block">Asset Intel</span>
+                                <MetadataItem icon={Cpu} label="Compute" value={activeFindings[0].resourceType} />
+                                <MetadataItem icon={Globe} label="Namespace" value="prod-cluster-01" />
+                                <MetadataItem icon={Lock} label="IAM Role" value="Admin-RW" />
+                            </div>
+                        )}
                     </div>
                 </div>
-            </aside>
 
-            {/* Copilot Chat Interface */}
-            <main className="flex-1 flex flex-col rounded-xl border border-slate-800 bg-slate-900/20 overflow-hidden shadow-2xl backdrop-blur-sm relative">
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/20 flex items-center gap-3">
+                    <History size={16} className="text-slate-500" />
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Logic Flow: DeepSeek-V2</span>
+                </div>
+            </div>
 
-                {/* Copilot Header */}
-                <div className="px-6 py-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
+            {/* Chat Workspace */}
+            <div className="flex-1 flex flex-col rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden relative glass shadow-2xl">
+
+                {/* Header */}
+                <div className="p-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-sky-500 flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.3)] animate-glow">
-                            <Bot size={22} className="text-slate-950" />
+                        <div className="w-10 h-10 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 shadow-[0_0_15px_rgba(56,189,248,0.1)]">
+                            <Bot size={22} className="animate-glow" />
                         </div>
                         <div>
-                            <div className="flex items-center gap-2">
-                                <h2 className="text-sm font-black text-white uppercase tracking-widest">Security Copilot v2.4</h2>
-                                <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-widest border border-emerald-500/20">Active</span>
+                            <div className="text-sm font-black text-white tracking-tight uppercase flex items-center gap-2">
+                                Sentinel Copilot <span className="text-[9px] bg-sky-500 text-slate-950 px-1.5 rounded animate-pulse">2.0</span>
                             </div>
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter mt-0.5">Automated Intelligence & Remediation Engine</p>
+                            <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Powered by DeepSeek AI Pipeline</div>
                         </div>
                     </div>
-                    <button
-                        onClick={clearMessages}
-                        className="text-slate-500 hover:text-red-400 transition-colors p-2 rounded hover:bg-red-400/5 group"
-                        title="Clear Intel History"
-                    >
-                        <Trash2 size={16} className="group-hover:scale-110 transition-transform" />
-                    </button>
+
+                    <div className="hidden sm:flex items-center gap-1 p-1 bg-slate-950/60 rounded-lg border border-slate-800">
+                        <ModeBtn active={mode === 'remediation'} onClick={() => setMode('remediation')} icon={Zap} label="Patch" />
+                        <ModeBtn active={mode === 'investigation'} onClick={() => setMode('investigation')} icon={Terminal} label="Probe" />
+                    </div>
                 </div>
 
-                {/* Messages Feed */}
-                <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth bg-cyber-grid">
+                {/* Messages */}
+                <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
                     {chatMessages.length === 0 && (
-                        <div className="h-full flex flex-col items-center justify-center text-center p-10">
+                        <div className="h-full flex flex-col items-center justify-center p-10 text-center">
                             <Sparkles size={48} className="text-slate-800 mb-6" />
-                            <h3 className="text-xl font-bold text-slate-300 mb-2 uppercase tracking-wide">Ready for Security Ingestion</h3>
-                            <p className="text-slate-500 max-w-sm text-xs font-medium leading-relaxed">
-                                Select findings from the left panel to load context, then ask me to generate remediation plans,
-                                explain MITRE tactics, or correlate telemetry.
+                            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-2">Awaiting Context Ingestion</h3>
+                            <p className="text-[10px] text-slate-600 font-bold uppercase tracking-tighter max-w-xs">
+                                Select cloud-native findings to hydrate the RAG pipeline for localized remediation plans.
                             </p>
                         </div>
                     )}
-                    {chatMessages.map((m, i) => (
-                        <div key={i} className={clsx("flex gap-4 animate-fade-in", m.role === 'user' ? "flex-row-reverse" : "flex-row")}>
+                    {chatMessages.map((msg, i) => (
+                        <div key={i} className={clsx("flex gap-4 animate-slide-up", msg.role === 'user' ? "flex-row-reverse" : "flex-row")}>
                             <div className={clsx(
-                                "w-9 h-9 rounded flex items-center justify-center flex-shrink-0 border shadow-lg",
-                                m.role === 'user' ? "bg-slate-800 border-slate-700 text-sky-400" : "bg-sky-500 border-sky-400 text-slate-950"
+                                "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 border",
+                                msg.role === 'user' ? "bg-slate-800 border-slate-700" : "bg-sky-500/10 border-sky-500/30 text-sky-400"
                             )}>
-                                {m.role === 'user' ? <User size={18} /> : <Bot size={18} />}
+                                {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
                             </div>
                             <div className={clsx(
-                                "max-w-[85%] rounded-xl px-5 py-4 shadow-xl relative",
-                                m.role === 'user'
-                                    ? "bg-slate-800/80 text-white border border-slate-700 rounded-tr-none"
-                                    : "bg-slate-950/80 text-slate-200 border border-sky-500/20 rounded-tl-none font-medium leading-relaxed text-sm glass"
+                                "max-w-[85%] rounded-2xl px-5 py-4 text-sm leading-relaxed shadow-lg",
+                                msg.role === 'user'
+                                    ? "bg-slate-800 text-slate-100"
+                                    : "bg-slate-900/80 border border-slate-800 text-slate-300 backdrop-blur-sm"
                             )}>
-                                {m.content.split('\n').map((line, li) => (
-                                    <p key={li} className={clsx(line.startsWith('-') || line.startsWith('  ') ? "ml-4" : "mb-2")}>
-                                        {line}
-                                    </p>
-                                ))}
+                                <div className="whitespace-pre-wrap">
+                                    {msg.content}
+                                </div>
                             </div>
                         </div>
                     ))}
                     {isTyping && (
-                        <div className="flex gap-4 animate-fade-in">
-                            <div className="w-9 h-9 rounded bg-sky-500 border border-sky-400 flex items-center justify-center text-slate-950 shadow-lg">
-                                <Bot size={18} />
+                        <div className="flex gap-4 animate-pulse">
+                            <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400">
+                                <Bot size={16} />
                             </div>
-                            <div className="bg-slate-950/80 border border-sky-500/10 rounded-xl rounded-tl-none px-5 py-4 flex gap-1.5 items-center shadow-xl glass">
+                            <div className="bg-slate-900/40 rounded-2xl px-4 py-3 flex gap-1.5 items-center">
                                 <div className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-bounce" style={{ animationDelay: '0ms' }} />
                                 <div className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-bounce" style={{ animationDelay: '150ms' }} />
                                 <div className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-bounce" style={{ animationDelay: '300ms' }} />
@@ -203,61 +173,68 @@ export default function AssistantPage() {
                     )}
                 </div>
 
-                {/* Command Input */}
-                <div className="p-6 border-t border-slate-800 bg-slate-900/40">
-                    <div className="relative flex items-center">
-                        <input
-                            type="text"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                            placeholder={selectedFindings.length === 0 ? "SELECT FINDINGS TO START ANALYSIS..." : "ASK COPILOT FOR REMEDIATION INTEL..."}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-4 pl-5 pr-14 text-sm font-medium text-white placeholder:text-slate-600 focus:border-sky-500/50 focus:ring-1 focus:ring-sky-500/20 outline-none transition-all shadow-inner"
+                {/* Input */}
+                <div className="p-4 border-t border-slate-800 bg-slate-900/60">
+                    <div className="relative group">
+                        <textarea
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleSend();
+                                }
+                            }}
+                            placeholder={activeFindings.length > 0 ? `DeepSeek Analyze: ${activeFindings[0].title}...` : "Query the Security Copilot..."}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-5 py-5 pr-16 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sky-500/50 transition-all min-h-[120px] resize-none"
                         />
                         <button
                             onClick={handleSend}
-                            disabled={!input.trim() || isTyping}
-                            className="absolute right-3 p-2.5 rounded-lg bg-sky-500 text-slate-950 hover:bg-sky-400 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-600 transition-all shadow-[0_0_10px_rgba(56,189,248,0.2)]"
+                            disabled={!inputValue.trim() || isTyping}
+                            className="absolute right-4 bottom-4 p-2.5 bg-sky-500 text-slate-950 rounded-xl hover:bg-sky-400 transition-all disabled:opacity-50 shadow-xl"
                         >
-                            <Send size={18} />
+                            <Send size={20} />
                         </button>
                     </div>
-                    <div className="flex items-center gap-4 mt-3 px-1">
-                        <div className="flex items-center gap-1 text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none">
-                            <Info size={10} />
-                            AI Insights use RAG on localized intel.
+                    <div className="mt-4 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-600">
+                        <div className="flex items-center gap-4">
+                            <span className="flex items-center gap-1.5"><Shield size={12} className="text-emerald-500 font-bold" /> E2E Encrypted</span>
+                            <span className="flex items-center gap-1.5"><Code size={12} className="text-sky-400" /> RAG Enabled</span>
                         </div>
-                        <div className="flex items-center gap-1 text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none">
-                            <Zap size={10} className="text-amber-500" />
-                            Accelerator: GPT-4o-Turbo
-                        </div>
+                        <button onClick={clearMessages} className="hover:text-red-400 transition-colors uppercase">Flush Buffer</button>
                     </div>
                 </div>
-            </main>
+
+                {/* Overlay Grid */}
+                <div className="absolute inset-0 pointer-events-none opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#38bdf8 1px, transparent 1px)', backgroundSize: '30px 30px' }} />
+            </div>
         </div>
     );
 }
 
-// ─── Logic ───────────────────────────────────────────────────────────────────
+function MetadataItem({ icon: Icon, label, value }: { icon: any, label: string, value: string }) {
+    return (
+        <div className="flex items-center justify-between py-2.5 border-b border-slate-800/50 last:border-0 group">
+            <div className="flex items-center gap-2.5">
+                <Icon size={14} className="text-slate-500 group-hover:text-sky-400 transition-colors" />
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{label}</span>
+            </div>
+            <span className="text-[10px] font-mono text-slate-300 font-bold">{value}</span>
+        </div>
+    );
+}
 
-function getAIResponse(input: string, selectedIds: string[]): string {
-    const findings = mockFindings.filter(f => selectedIds.includes(f.id));
-
-    if (findings.length === 0) {
-        return "⚠️ INTEL DEFICIT: Please select one or more findings from the 'Context Ingestion' panel for a targeted analysis.";
-    }
-
-    if (input.toLowerCase().includes('remediate') || input.toLowerCase().includes('fix')) {
-        let resp = "🛡️ GENERATING STRATEGIC REMEDIATION PLAN...\n\n";
-        findings.forEach(f => {
-            resp += `>>> ANALYSIS: ${f.title.toUpperCase()}\n`;
-            resp += `- SEVERITY: ${f.severity.toUpperCase()} (Risk Score: ${f.riskScore})\n`;
-            if (f.mitre) resp += `- MITRE ALIGNMENT: ${f.mitre.id} (${f.mitre.technique})\n`;
-            resp += `- REMEDIATION:\n  ${f.remediationCommand || 'Manual inspection required.'}\n\n`;
-        });
-        resp += "### SYSTEM RECOMMENDATION\nExecute the above CLI payloads in the order presented. Post-remediation scan is mandatory.";
-        return resp;
-    }
-
-    return `I have ingested intel for ${findings.length} findings. Based on current telemetry:\n\n- Primary Vector: ${findings[0].resourceType.toUpperCase()}\n- Aggregate Risk: ${(findings.reduce((acc, f) => acc + f.riskScore, 0) / findings.length).toFixed(1)}\n\nWhat specific diagnostic or iAC manifest would you like me to generate?`;
+function ModeBtn({ active, onClick, icon: Icon, label }: { active: boolean, onClick: () => void, icon: any, label: string }) {
+    return (
+        <button
+            onClick={onClick}
+            className={clsx(
+                "flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-[10px] font-black uppercase tracking-widest",
+                active ? "bg-sky-500 text-slate-950 shadow-lg shadow-sky-500/20 scale-[1.05]" : "text-slate-500 hover:text-white"
+            )}
+        >
+            <Icon size={14} />
+            {label}
+        </button>
+    );
 }

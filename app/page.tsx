@@ -2,145 +2,160 @@
 
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
+import { useState, useMemo } from 'react';
 import {
-  Shield, AlertTriangle, Clock, Activity,
-  TrendingDown, ChevronRight, Zap, ArrowUpRight,
-  Database, Globe, Lock, Cpu, Radar, Info
+  Shield, ShieldAlert, ShieldCheck, Zap,
+  ArrowUpRight, ArrowDownRight, Globe, Lock,
+  Activity, Container, Server, Database, Radar
 } from 'lucide-react';
-import { mockFindings, threatIntel, complianceSummary } from '@/lib/mock-data';
+import RiskTrendChart from '@/components/charts/RiskTrendChart';
+import { mockFindings, complianceSummary, threatIntel } from '@/lib/mock-data';
 import { useAppStore } from '@/lib/store';
 import clsx from 'clsx';
 
-const RiskTrendChart = dynamic(() => import('@/components/charts/RiskTrendChart'), { ssr: false });
-
-const severityConfig = {
-  critical: { color: '#ef4444', label: 'CRITICAL' },
-  high: { color: '#f59e0b', label: 'HIGH' },
-  medium: { color: '#eab308', label: 'MEDIUM' },
-  low: { color: '#10b981', label: 'LOW' },
-};
-
-export default function DashboardPage() {
+export default function Dashboard() {
   const { addToast } = useAppStore();
   const [scanning, setScanning] = useState(false);
 
-  const handleScan = () => {
+  const handleGlobalScan = () => {
     setScanning(true);
-    addToast('Threat Hunting Initiated...', 'info');
+    addToast('GLOBAL FLEET DISCOVERY INITIATED...', 'info');
     setTimeout(() => {
       setScanning(false);
-      addToast('Scan complete: 0 new anomalies detected.', 'success');
-    }, 2500);
+      addToast('SCAN COMPLETE: 12 new findings ingested.', 'success');
+    }, 3000);
   };
+
+  const criticalCount = mockFindings.filter(f => f.severity === 'critical').length;
+  const highCount = mockFindings.filter(f => f.severity === 'high').length;
 
   return (
     <div className="space-y-6 animate-fade-in pb-10">
 
-      {/* Platform Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-800 pb-6 mb-2">
-        <div>
-          <h2 className="text-2xl font-bold text-white tracking-tight">Security Posture Overview</h2>
-          <p className="text-slate-500 text-sm mt-1">Real-time telemetry and threat intelligence feed for all cloud endpoints.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-lg flex items-center gap-4">
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] font-bold text-slate-500 uppercase">Agents</span>
-              <span className="text-sm font-bold text-white">4,281</span>
-            </div>
-            <div className="h-6 w-px bg-slate-800" />
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] font-bold text-slate-500 uppercase">Traffic</span>
-              <span className="text-sm font-bold text-sky-400">12.4 GB/s</span>
-            </div>
-          </div>
-          <button
-            onClick={handleScan}
-            disabled={scanning}
-            className="bg-sky-500 hover:bg-sky-400 text-slate-950 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(56,189,248,0.3)] disabled:opacity-50"
-          >
-            {scanning ? <Radar size={16} className="animate-spin" /> : <Zap size={16} />}
-            {scanning ? 'HUNTING...' : 'RUN GLOBAL SCAN'}
-          </button>
-        </div>
+      {/* 1. SECURITY POSTURE OVERVIEW (2.0) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <PostureCard label="CRITICAL FINDINGS" count={criticalCount} delta="+12%" deltaColor="text-red-400" icon={ShieldAlert} />
+        <PostureCard label="HIGH SEVERITY" count={highCount} delta="-5%" deltaColor="text-emerald-400" icon={Shield} />
+        <PostureCard label="ACTIVE ASSETS" count={5678} delta="+234" deltaColor="text-sky-400" icon={Server} />
+        <PostureCard label="THREAT RADIUS" count="1.2k" delta="-8%" deltaColor="text-emerald-400" icon={Radar} />
       </div>
 
-      {/* High Density Stats & Security Score */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-        {/* Security Score Dial (Microsoft Style) */}
-        <div className="card-hover rounded-xl p-5 flex flex-col items-center justify-center text-center bg-slate-900/40 min-h-[180px]">
-          <div className="relative w-28 h-28 flex items-center justify-center">
-            <svg className="w-full h-full transform -rotate-90">
-              <circle cx="56" cy="56" r="48" fill="transparent" stroke="currentColor" strokeWidth="8" className="text-slate-800" />
-              <circle cx="56" cy="56" r="48" fill="transparent" stroke="currentColor" strokeWidth="8" strokeDasharray={301.59} strokeDashoffset={301.59 * (1 - 0.72)} className="text-sky-500 transition-all duration-1000" />
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-3xl font-black text-white">72</span>
-              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-widest mt-[-4px]">Secure Score</span>
-            </div>
-          </div>
-          <p className="mt-4 text-[10px] font-bold text-sky-500/80 uppercase tracking-widest">+4.2% THIS MONTH</p>
-        </div>
-
-        {/* Dynamic High-Density Tiles */}
-        <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { label: 'CRITICAL FINDINGS', value: '23', change: '+3', icon: AlertTriangle, color: 'text-red-500' },
-            { label: 'ACTIVE THREATS', value: '12', change: '-2', icon: Radar, color: 'text-amber-500' },
-            { label: 'AVG REMEDIATION', value: '21h', change: '-4h', icon: Clock, color: 'text-emerald-500' },
-            { label: 'TOTAL ALERTS', value: '1,504', change: '+12%', icon: Activity, color: 'text-sky-500' },
-            { label: 'CLOUD ASSETS', value: '842', change: '+12', icon: Globe, color: 'text-slate-400' },
-            { label: 'IAM ROLES', value: '128', change: '0', icon: Lock, color: 'text-slate-400' },
-            { label: 'DB INSTANCES', value: '45', change: '+2', icon: Database, color: 'text-slate-400' },
-            { label: 'COMPUTE NODES', value: '312', change: '+15', icon: Cpu, color: 'text-slate-400' },
-          ].map((stat, i) => (
-            <div key={i} className="card-hover rounded-xl p-4 bg-slate-900/40">
-              <div className="flex items-center gap-2 mb-2">
-                <stat.icon size={14} className={stat.color} />
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{stat.label}</span>
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-xl font-bold text-white">{stat.value}</span>
-                <span className={clsx("text-[10px] font-bold", stat.change.startsWith('+') ? 'text-red-400' : 'text-emerald-400')}>
-                  {stat.change}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Main Analysis Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-        {/* Risk Trend (Sentinel Style) */}
-        <div className="card-hover rounded-xl p-5 bg-slate-900/20">
-          <div className="flex items-center justify-between mb-6">
+        {/* 2. REAL-TIME THREAT MAP (STUB) */}
+        <div className="lg:col-span-8 rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden relative glass min-h-[400px]">
+          <div className="p-6 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2">
-                <Activity size={16} className="text-sky-400" />
-                Risk Exposure Over Time
+              <h3 className="text-sm font-black text-white tracking-widest uppercase flex items-center gap-2">
+                <Globe size={18} className="text-sky-400" />
+                Real-time Threat Map
               </h3>
-              <p className="text-[10px] text-slate-500 mt-1 uppercase font-bold tracking-tighter">Rolling 30-day incident telemetry</p>
+              <p className="text-[10px] font-bold text-slate-500 uppercase mt-1">Live Ingress/Egress Telemetry & Attack Vectors</p>
             </div>
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-300">
-                <span className="w-2 h-2 rounded-full bg-red-500" /> Critical
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-300">
-                <span className="w-2 h-2 rounded-full bg-amber-500" /> High
-              </div>
+              <MapStat label="ACTIVE ATTACKS" val="1,234" color="text-red-500" />
+              <MapStat label="BLOCKED" val="12.3k" color="text-emerald-500" />
             </div>
           </div>
-          <RiskTrendChart />
+
+          {/* Mock Map Canvas */}
+          <div className="absolute inset-0 top-20 flex items-center justify-center opacity-40 pointer-events-none">
+            <div className="w-full h-full relative" style={{ backgroundImage: 'radial-gradient(#1e293b 1px, transparent 1px)', backgroundSize: '40px 40px' }}>
+              {/* Animated Attack Pulse */}
+              <div className="absolute top-1/4 left-1/3 w-2 h-2 rounded-full bg-red-500 animate-ping" />
+              <div className="absolute top-1/2 left-2/3 w-2 h-2 rounded-full bg-sky-500 animate-ping" style={{ animationDelay: '1s' }} />
+              <div className="absolute top-3/4 left-1/2 w-2 h-2 rounded-full bg-red-500 animate-ping" style={{ animationDelay: '0.5s' }} />
+
+              <svg className="absolute inset-0 w-full h-full text-slate-800" strokeDasharray="5,5">
+                <line x1="33%" y1="25%" x2="50%" y2="75%" stroke="currentColor" strokeWidth="1" />
+                <line x1="66%" y1="50%" x2="50%" y2="75%" stroke="currentColor" strokeWidth="1" />
+              </svg>
+            </div>
+          </div>
+
+          <div className="absolute bottom-6 left-6 flex items-center gap-3">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800 shadow-2xl">
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-[10px] font-black text-white uppercase tracking-widest">High Intensity Area: US-EAST</span>
+            </div>
+          </div>
         </div>
 
-        {/* Threat Intelligence Feed (CrowdStrike Style) */}
-        <div className="card-hover rounded-xl p-5 bg-slate-900/20 flex flex-col">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2">
+        {/* 3. QUICK SCAN & FLEET STATUS */}
+        <div className="lg:col-span-4 space-y-6">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 glass h-full flex flex-col">
+            <div className="flex items-center gap-3 mb-6">
+              <Activity size={20} className="text-emerald-500" />
+              <h3 className="text-sm font-black text-white tracking-widest uppercase">Fleet Telemetry</h3>
+            </div>
+
+            <div className="flex-1 space-y-4">
+              <TelemetryRow icon={Container} label="K8s Workloads" val="542" />
+              <TelemetryRow icon={Server} label="Instances" val="129" />
+              <TelemetryRow icon={Database} label="Storage Buckets" val="86" />
+              <TelemetryRow icon={Lock} label="IAM Policies" val="1.8k" />
+            </div>
+
+            <button
+              onClick={handleGlobalScan}
+              disabled={scanning}
+              className={clsx(
+                "w-full mt-8 py-4 px-6 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all relative overflow-hidden group",
+                scanning
+                  ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                  : "bg-sky-500 text-slate-950 hover:bg-sky-400 shadow-[0_0_30px_rgba(58,189,248,0.3)] hover:scale-[1.02]"
+              )}
+            >
+              <span className="relative z-10 flex items-center justify-center gap-3">
+                {scanning ? <Radar size={18} className="animate-spin" /> : <Zap size={18} />}
+                {scanning ? "Analyzing Cloud Fabric..." : "Run Global Scan"}
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 4. FINDINGS & COMPLIANCE TRENDS */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-8 rounded-2xl border border-slate-800 bg-slate-900/20 p-6 glass">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h3 className="text-sm font-black text-white tracking-widest uppercase flex items-center gap-2">
+                <Activity size={18} className="text-amber-500" />
+                Risk Intelligence Trend
+              </h3>
+            </div>
+          </div>
+          <div className="h-[300px]">
+            <RiskTrendChart />
+          </div>
+        </div>
+
+        <div className="lg:col-span-4 rounded-2xl border border-slate-800 bg-slate-900/20 p-6 glass">
+          <h3 className="text-sm font-black text-white tracking-widest uppercase mb-6">Compliance Score</h3>
+          <div className="space-y-6">
+            <ComplianceItem label="HIPAA Security" progress={68} color="bg-red-400" />
+            <ComplianceItem label="NIST 800-53" progress={85} color="bg-emerald-400" />
+            <ComplianceItem label="ISO 27001" progress={72} color="bg-sky-400" />
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+// ─── UI HELPERS ──────────────────────────────────────────────────────────────
+
+function PostureCard({ label, count, delta, deltaColor, icon: Icon }: any) {
+  return (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-5 glass group hover:border-slate-700 transition-all">
+            <div className="flex items-center justify-between mb-3 text-slate-500">
+                <Icon size={18} className="group-hover:text-white transition-colors" />
+                <span className={clsx("text-[10px] font-bold flex items-center gap-0.5", deltaColor)}>
+                    {delta.startsWith('+') ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
+                    {delta}
+                </span>
               <Radar size={16} className="text-red-500 animate-pulse" />
               Threat Intel Feed
             </h3>
@@ -173,14 +188,14 @@ export default function DashboardPage() {
           <button className="w-full mt-4 py-2 border border-slate-800 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors uppercase tracking-widest">
             Explore Full Intel Cloud
           </button>
-        </div>
-      </div>
+        </div >
+      </div >
 
-      {/* High-Impact Findings & Compliance */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+    {/* High-Impact Findings & Compliance */ }
+    < div className = "grid grid-cols-1 lg:grid-cols-5 gap-4" >
 
-        {/* MITRE ATT&CK Mapped Findings */}
-        <div className="lg:col-span-3 card-hover rounded-xl p-5 bg-slate-900/20">
+      {/* MITRE ATT&CK Mapped Findings */ }
+      < div className = "lg:col-span-3 card-hover rounded-xl p-5 bg-slate-900/20" >
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2">
               <AlertTriangle size={16} className="text-red-500" />
@@ -220,10 +235,10 @@ export default function DashboardPage() {
               );
             })}
           </div>
-        </div>
+        </div >
 
-        {/* Compliance Posture Matrix */}
-        <div className="lg:col-span-2 card-hover rounded-xl p-5 bg-slate-900/20 flex flex-col">
+    {/* Compliance Posture Matrix */ }
+    < div className = "lg:col-span-2 card-hover rounded-xl p-5 bg-slate-900/20 flex flex-col" >
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2">
               <Shield size={16} className="text-sky-400" />
@@ -257,9 +272,9 @@ export default function DashboardPage() {
             Download Audit Package
             <ArrowUpRight size={12} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
           </Link>
-        </div>
-      </div>
+        </div >
+      </div >
 
-    </div>
+    </div >
   );
 }

@@ -1,155 +1,220 @@
 'use client';
 
 import { useState } from 'react';
+import {
+    User, Shield, Bell, Key, Database, Globe,
+    Lock, ChevronRight, Save, Zap, Info, ShieldCheck,
+    Cpu, HardDrive, Terminal
+} from 'lucide-react';
 import { useAppStore } from '@/lib/store';
-import { User, Bell, Key, Shield, ChevronRight, Eye, EyeOff, Check } from 'lucide-react';
+import clsx from 'clsx';
 
-const roles = [
-    { key: 'admin', label: 'Admin', desc: 'Full system access, all settings', color: '#FF6B6B', emoji: '👑' },
-    { key: 'security', label: 'Security Team', desc: 'View all findings, generate reports', color: '#2D9CDB', emoji: '🛡️' },
-    { key: 'developer', label: 'Developer', desc: 'View own projects, execute remediations', color: '#27AE60', emoji: '💻' },
-    { key: 'auditor', label: 'Auditor', desc: 'Read-only access to compliance reports', color: '#F2994A', emoji: '📋' },
-] as const;
+type Tab = 'profile' | 'security' | 'notifications' | 'api' | 'fleet';
 
 export default function SettingsPage() {
-    const { userRole, setUserRole, userName, addToast } = useAppStore();
-    const [showKey, setShowKey] = useState(false);
-    const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-    const [emailDigest, setEmailDigest] = useState(true);
-    const [slackAlerts, setSlackAlerts] = useState(false);
+    const { addToast, userRole, userName } = useAppStore();
+    const [activeTab, setActiveTab] = useState<Tab>('security');
+    const [saving, setSaving] = useState(false);
 
-    const save = (msg: string) => addToast(`✅ ${msg}`, 'success');
+    const handleSave = () => {
+        setSaving(true);
+        addToast('SYNCING SETTINGS TO SENTINEL CORE...', 'info');
+        setTimeout(() => {
+            setSaving(false);
+            addToast('CONFIGURATION UPDATED: Global policies synchronized.', 'success');
+        }, 1500);
+    };
+
+    const sidebarItems = [
+        { id: 'profile', label: 'Identity & Access', icon: User },
+        { id: 'security', label: 'Platform Security', icon: Shield },
+        { id: 'notifications', label: 'Intel Routing', icon: Bell },
+        { id: 'api', label: 'API & Integrations', icon: Key },
+        { id: 'fleet', label: 'Fleet Configuration', icon: Cpu },
+    ];
 
     return (
-        <div className="max-w-3xl mx-auto space-y-5 animate-fade-in">
+        <div className="flex gap-6 animate-fade-in pb-10">
 
-            {/* Profile */}
-            <section className="rounded-2xl border p-6" style={{ background: 'var(--card)', borderColor: 'var(--border)' }}>
-                <h2 className="font-semibold text-sm mb-4 flex items-center gap-2" style={{ color: 'var(--text)' }}>
-                    <User size={15} className="text-[#2D9CDB]" /> Profile
-                </h2>
-                <div className="flex items-center gap-4 mb-4">
-                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-lg font-bold" style={{ background: 'linear-gradient(135deg, #2D9CDB, #0A1929)' }}>
-                        SK
-                    </div>
-                    <div>
-                        <p className="font-semibold" style={{ color: 'var(--text)' }}>{userName}</p>
-                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>sandeep@cloudshield.io</p>
-                        <span className="text-xs px-2 py-0.5 rounded-full badge-info capitalize mt-1 inline-block">{userRole}</span>
-                    </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                    {(['Full Name', 'Email'] as const).map(label => (
-                        <div key={label}>
-                            <label className="text-xs font-medium block mb-1" style={{ color: 'var(--text-muted)' }}>{label}</label>
-                            <input
-                                defaultValue={label === 'Full Name' ? userName : 'sandeep@cloudshield.io'}
-                                className="w-full px-3 py-2 text-sm rounded-lg border outline-none transition-all focus:ring-2 focus:ring-[#2D9CDB]/30"
-                                style={{ background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
-                            />
-                        </div>
-                    ))}
-                </div>
-                <button onClick={() => save('Profile updated')} className="mt-4 px-4 py-2 rounded-lg text-sm text-white font-medium hover:opacity-90 transition-all" style={{ background: 'linear-gradient(135deg, #2D9CDB, #1a6fa8)' }}>
-                    Save Changes
-                </button>
-            </section>
-
-            {/* RBAC Role */}
-            <section className="rounded-2xl border p-6" style={{ background: 'var(--card)', borderColor: 'var(--border)' }}>
-                <h2 className="font-semibold text-sm mb-4 flex items-center gap-2" style={{ color: 'var(--text)' }}>
-                    <Shield size={15} className="text-[#2D9CDB]" /> Role & Permissions
-                </h2>
-                <div className="grid grid-cols-2 gap-3">
-                    {roles.map(role => (
+            {/* Control Plane Sidebar */}
+            <aside className="w-64 flex-shrink-0">
+                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-2 space-y-1">
+                    {sidebarItems.map((item) => (
                         <button
-                            key={role.key}
-                            onClick={() => { setUserRole(role.key); save(`Role changed to ${role.label}`); }}
-                            className="flex items-start gap-3 p-4 rounded-xl border text-left transition-all hover:opacity-80"
-                            style={{
-                                background: userRole === role.key ? `${role.color}12` : 'var(--bg)',
-                                borderColor: userRole === role.key ? role.color + '55' : 'var(--border)',
-                            }}
+                            key={item.id}
+                            onClick={() => setActiveTab(item.id as Tab)}
+                            className={clsx(
+                                "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-all group",
+                                activeTab === item.id
+                                    ? "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                                    : "text-slate-500 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent"
+                            )}
                         >
-                            <span className="text-xl">{role.emoji}</span>
-                            <div className="flex-1">
-                                <div className="flex items-center gap-1.5">
-                                    <span className="text-sm font-semibold" style={{ color: userRole === role.key ? role.color : 'var(--text)' }}>{role.label}</span>
-                                    {userRole === role.key && <Check size={13} style={{ color: role.color }} />}
-                                </div>
-                                <p className="text-xs mt-0.5 leading-snug" style={{ color: 'var(--text-muted)' }}>{role.desc}</p>
-                            </div>
+                            <item.icon size={16} className={clsx(
+                                "transition-colors",
+                                activeTab === item.id ? "text-sky-400" : "group-hover:text-slate-300"
+                            )} />
+                            <span className="text-[11px] font-black uppercase tracking-widest">{item.label}</span>
+                            {activeTab === item.id && <ChevronRight size={14} className="ml-auto" />}
                         </button>
                     ))}
                 </div>
-            </section>
 
-            {/* Notifications */}
-            <section className="rounded-2xl border p-6" style={{ background: 'var(--card)', borderColor: 'var(--border)' }}>
-                <h2 className="font-semibold text-sm mb-4 flex items-center gap-2" style={{ color: 'var(--text)' }}>
-                    <Bell size={15} className="text-[#2D9CDB]" /> Notifications
-                </h2>
-                <div className="space-y-3">
-                    {[
-                        { label: 'Push Notifications', sub: 'Critical findings and scan completions', val: notificationsEnabled, set: setNotificationsEnabled },
-                        { label: 'Email Digest', sub: 'Daily summary of open issues', val: emailDigest, set: setEmailDigest },
-                        { label: 'Slack Alerts', sub: 'Critical findings sent to #security channel', val: slackAlerts, set: setSlackAlerts },
-                    ].map(item => (
-                        <div key={item.label} className="flex items-center justify-between py-2 border-b last:border-0" style={{ borderColor: 'var(--border)' }}>
-                            <div>
-                                <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{item.label}</p>
-                                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.sub}</p>
-                            </div>
-                            <button
-                                onClick={() => { item.set(!item.val); save(`${item.label} ${!item.val ? 'enabled' : 'disabled'}`); }}
-                                className="relative w-11 h-6 rounded-full transition-all duration-300"
-                                style={{ background: item.val ? '#2D9CDB' : 'var(--border)' }}
-                            >
-                                <span className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all duration-300" style={{ left: item.val ? '1.5rem' : '0.125rem' }} />
-                            </button>
-                        </div>
-                    ))}
+                <div className="mt-6 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+                    <div className="flex items-center gap-2 mb-4">
+                        <ShieldCheck size={16} className="text-emerald-500" />
+                        <span className="text-[10px] font-black text-white uppercase tracking-widest">Trust Center</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-relaxed font-bold uppercase tracking-tighter">
+                        Your account is currently operating under <span className="text-sky-400">{userRole.toUpperCase()}</span> policy constraints.
+                    </p>
                 </div>
-            </section>
+            </aside>
 
-            {/* API Key */}
-            <section className="rounded-2xl border p-6" style={{ background: 'var(--card)', borderColor: 'var(--border)' }}>
-                <h2 className="font-semibold text-sm mb-4 flex items-center gap-2" style={{ color: 'var(--text)' }}>
-                    <Key size={15} className="text-[#2D9CDB]" /> API Configuration
-                </h2>
-                <div className="space-y-3">
-                    <div>
-                        <label className="text-xs font-medium block mb-1" style={{ color: 'var(--text-muted)' }}>API Key</label>
-                        <div className="flex items-center gap-2">
-                            <input
-                                readOnly
-                                value={showKey ? 'cs_live_sk_4f8b3a2d9e1c7f0b6a5e8d3c2f1a9b4e' : '••••••••••••••••••••••••••••••••••••'}
-                                className="flex-1 px-3 py-2 text-sm rounded-lg border font-mono outline-none"
-                                style={{ background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
-                            />
-                            <button onClick={() => setShowKey(!showKey)} className="px-3 py-2 rounded-lg border" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
-                                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                            </button>
-                            <button onClick={() => { navigator.clipboard.writeText('cs_live_sk_4f8b3a2d9e1c7f0b6a5e8d3c2f1a9b4e'); addToast('✅ API key copied', 'success'); }}
-                                className="px-3 py-2 rounded-lg text-xs font-medium text-white" style={{ background: '#2D9CDB' }}>
-                                Copy
-                            </button>
+            {/* Config Workspace */}
+            <main className="flex-1 min-w-0">
+                <div className="rounded-xl border border-slate-800 bg-slate-900/20 shadow-2xl overflow-hidden backdrop-blur-sm">
+
+                    {/* Workspace Header */}
+                    <div className="px-6 py-5 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
+                        <div>
+                            <h3 className="text-lg font-bold text-white uppercase tracking-tight">
+                                {sidebarItems.find(item => item.id === activeTab)?.label}
+                            </h3>
+                            <p className="text-[11px] text-slate-500 uppercase font-black tracking-widest mt-1">Global Configuration Partition</p>
                         </div>
+                        <button
+                            onClick={handleSave}
+                            disabled={saving}
+                            className="bg-sky-500 hover:bg-sky-400 text-slate-950 px-5 py-2 rounded-lg text-xs font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(56,189,248,0.2)] disabled:opacity-50"
+                        >
+                            <Save size={14} /> {saving ? 'SYNCING...' : 'SAVE CHANGES'}
+                        </button>
                     </div>
-                    <div>
-                        <label className="text-xs font-medium block mb-1" style={{ color: 'var(--text-muted)' }}>OpenAI API Key (for AI features)</label>
-                        <input
-                            type="password"
-                            defaultValue="sk-••••••••••••••••••••••"
-                            className="w-full px-3 py-2 text-sm rounded-lg border font-mono outline-none"
-                            style={{ background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
-                        />
+
+                    {/* Workspace Content */}
+                    <div className="p-8 space-y-10">
+                        {activeTab === 'profile' && (
+                            <section className="space-y-6">
+                                <SettingGroup title="Operator Identity">
+                                    <div className="grid grid-cols-2 gap-6">
+                                        <SettingField label="Display Name" value={userName} />
+                                        <SettingField label="Operator ID" value="SENTINEL-X892" />
+                                        <SettingField label="Primary Region" value="US-EAST-1 (N. Virginia)" />
+                                        <SettingField label="Auth Status" value="MFA PROTECTED" success />
+                                    </div>
+                                </SettingGroup>
+                            </section>
+                        )}
+
+                        {activeTab === 'security' && (
+                            <section className="space-y-6">
+                                <SettingGroup title="Platform Hardening">
+                                    <div className="space-y-4">
+                                        <ToggleSetting label="Auto-Remediate Critical Anomalies" description="Sentinel Core will execute patching on detected zero-days immediately." active />
+                                        <ToggleSetting label="Intelligent Threat Correlation" description="Use ML to link telemetry across VPC boundaries." active />
+                                        <ToggleSetting label="Deep Packet Inspection" description="Enable intercept on all egress traffic for sensitive payloads." />
+                                    </div>
+                                </SettingGroup>
+
+                                <SettingGroup title="Identity Access Management (IAM)">
+                                    <div className="p-4 rounded-lg bg-slate-950 border border-slate-800">
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Permission Scope: RESTRICTED</span>
+                                        </div>
+                                        <div className="text-[11px] text-slate-400 font-medium leading-relaxed">
+                                            Your role (<span className="text-sky-400 font-bold">{userRole}</span>) is governed by cross-region IAM policies.
+                                            Contact the Master Admin to elevate your security clearance.
+                                        </div>
+                                    </div>
+                                </SettingGroup>
+                            </section>
+                        )}
+
+                        {activeTab === 'api' && (
+                            <section className="space-y-6">
+                                <SettingGroup title="Sentinel Core API">
+                                    <div className="p-4 rounded-lg bg-slate-950 border border-slate-900 border-dashed relative group">
+                                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">ACTIVE API KEY</p>
+                                        <p className="text-xs font-mono text-white tracking-widest">cs_live_9a2bc8********************f3e1</p>
+                                        <button className="absolute top-4 right-4 p-2 rounded hover:bg-slate-800 transition-colors">
+                                            <Zap size={14} className="text-sky-400" />
+                                        </button>
+                                    </div>
+                                </SettingGroup>
+
+                                <SettingGroup title="Telemetry Connectors">
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {['AWS', 'Azure', 'GCP', 'Kubernetes', 'Splunk', 'CrowdStrike'].map(c => (
+                                            <div key={c} className="p-3 rounded-lg border border-slate-800 bg-slate-950/50 flex items-center justify-between group hover:border-sky-500/50 transition-all">
+                                                <span className="text-[11px] font-bold text-slate-400 group-hover:text-white uppercase">{c}</span>
+                                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </SettingGroup>
+                            </section>
+                        )}
+
+                        {activeTab === 'fleet' && (
+                            <section className="space-y-6 text-center py-10">
+                                <Cpu size={48} className="text-slate-800 mx-auto mb-4" />
+                                <h4 className="text-white font-black uppercase tracking-widest">Fleet Telemetry Partition</h4>
+                                <p className="text-slate-500 text-xs max-w-sm mx-auto uppercase font-bold tracking-tighter">
+                                    Accessing high-level fleet orchestration requires level 4 security clearance.
+                                    Hardware identifiers and agent telemetry profiles are locked.
+                                </p>
+                            </section>
+                        )}
                     </div>
                 </div>
-                <button onClick={() => save('API settings saved')} className="mt-4 px-4 py-2 rounded-lg text-sm text-white font-medium hover:opacity-90 transition-all" style={{ background: 'linear-gradient(135deg, #2D9CDB, #1a6fa8)' }}>
-                    Save API Settings
-                </button>
-            </section>
+            </main>
+        </div>
+    );
+}
+
+// ─── UI Primitives ───────────────────────────────────────────────────────────
+
+function SettingGroup({ title, children }: { title: string; children: React.ReactNode }) {
+    return (
+        <div className="space-y-4">
+            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-l-2 border-sky-500/50 pl-3">{title}</h4>
+            {children}
+        </div>
+    );
+}
+
+function SettingField({ label, value, success }: { label: string; value: string; success?: boolean }) {
+    return (
+        <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{label}</label>
+            <div className={clsx(
+                "w-full px-4 py-3 rounded-lg bg-slate-950 border border-slate-900 font-bold text-sm transition-all",
+                success ? "text-emerald-400 border-emerald-500/10" : "text-white"
+            )}>
+                {value}
+            </div>
+        </div>
+    );
+}
+
+function ToggleSetting({ label, description, active }: { label: string; description: string; active?: boolean }) {
+    return (
+        <div className="flex items-center justify-between p-4 rounded-xl border border-slate-800 bg-slate-900/40 hover:bg-slate-900/60 transition-all">
+            <div className="flex-1 pr-10">
+                <div className="text-xs font-black text-white uppercase tracking-tight mb-1">{label}</div>
+                <div className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">{description}</div>
+            </div>
+            <button className={clsx(
+                "w-12 h-6 rounded-full p-1 transition-all relative flex items-center",
+                active ? "bg-sky-500" : "bg-slate-800"
+            )}>
+                <div className={clsx(
+                    "w-4 h-4 rounded-full bg-white shadow-lg transition-transform",
+                    active ? "translate-x-6" : "translate-x-0"
+                )} />
+            </button>
         </div>
     );
 }

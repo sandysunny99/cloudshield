@@ -1,250 +1,217 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
-    Shield, CheckCircle2, AlertCircle, FileText, Download,
-    ChevronRight, ExternalLink, Filter, Search, BarChart3,
-    Clock, Lock, Zap
+    Shield, CheckCircle2, AlertTriangle, Search,
+    Download, FileText, Filter, ChevronRight,
+    Lock, Zap, Globe, Archive, Activity, BarChart3, Clock, ExternalLink
 } from 'lucide-react';
 import { complianceSummary } from '@/lib/mock-data';
 import { useAppStore } from '@/lib/store';
 import clsx from 'clsx';
 
-type Tab = 'hipaa' | 'nist' | 'iso';
+export default function GRCPage() {
+    const [activeFramework, setActiveFramework] = useState(complianceSummary[0].framework);
+    const [search, setSearch] = useState('');
 
-const frameworkDetails: Record<Tab, {
-    name: string;
-    description: string;
-    controls: number;
-    lastAudit: string;
-    nextAudit: string;
-}> = {
-    hipaa: {
-        name: 'HIPAA Security Rule',
-        description: 'Health Insurance Portability and Accountability Act - Security & Privacy Standards.',
-        controls: 14,
-        lastAudit: '2026-01-15',
-        nextAudit: '2026-04-15',
-    },
-    nist: {
-        name: 'NIST 800-53 r5',
-        description: 'Security and Privacy Controls for Information Systems and Organizations.',
-        controls: 53,
-        lastAudit: '2026-02-10',
-        nextAudit: '2026-05-10',
-    },
-    iso: {
-        name: 'ISO/IEC 27001:2022',
-        description: 'Information security, cybersecurity and privacy protection — Management systems.',
-        controls: 35,
-        lastAudit: '2025-12-20',
-        nextAudit: '2026-06-20',
-    }
-};
+    const current = useMemo(() =>
+        complianceSummary.find(f => f.framework === activeFramework) || complianceSummary[0]
+        , [activeFramework]);
 
-export default function CompliancePage() {
-    const { addToast } = useAppStore();
-    const [activeTab, setActiveTab] = useState<Tab>('nist');
-    const [exporting, setExporting] = useState(false);
-
-    const handleExport = (format: string) => {
-        setExporting(true);
-        addToast(`Generating Compliance Package (${format.toUpperCase()})...`, 'info');
-        setTimeout(() => {
-            setExporting(false);
-            addToast(`AUDIT EXPORT: ${activeTab.toUpperCase()} Package secured.`, 'success');
-        }, 2000);
-    };
-
-    const current = frameworkDetails[activeTab];
-    const stats = complianceSummary[activeTab];
+    const controls = useMemo(() => {
+        if (!current.details) return [];
+        return current.details.filter(c =>
+            c.title.toLowerCase().includes(search.toLowerCase()) ||
+            c.id.toLowerCase().includes(search.toLowerCase())
+        );
+    }, [current, search]);
 
     return (
-        <div className="space-y-6 animate-fade-in pb-10">
+        <div className="space-y-6 animate-fade-in pb-20 font-inter">
 
-            {/* GRC Header */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-800 pb-6">
-                <div>
-                    <h2 className="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
-                        <Lock size={24} className="text-sky-400" />
-                        Governance & Risk Compliance
+            {/* GRC 2.0 Header */}
+            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 border-b border-slate-800 pb-6">
+                <div className="min-w-0 flex-1">
+                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-3 flex-wrap break-words">
+                        <Lock size={24} className="text-sky-400 flex-shrink-0" />
+                        <span className="truncate sm:whitespace-normal">Governance & Risk Compliance 2.0</span>
                     </h2>
-                    <p className="text-slate-500 text-sm mt-1 uppercase font-bold tracking-tighter">Enterprise Framework Audit & Control Monitoring</p>
+                    <p className="text-slate-500 text-[10px] sm:text-xs mt-1 uppercase font-bold tracking-tighter truncate sm:whitespace-normal underline decoration-sky-500/30 decoration-2 underline-offset-4">Continuous Audit & Evidence Orchestration</p>
                 </div>
-                <div className="flex items-center gap-3">
-                    <button
-                        onClick={() => handleExport('pdf')}
-                        className="px-4 py-2 rounded-lg border border-slate-800 bg-slate-900/60 text-[10px] font-black text-slate-300 hover:text-white hover:border-slate-700 transition-all uppercase tracking-widest flex items-center gap-2"
-                    >
-                        <FileText size={14} /> Audit Package (PDF)
+                <div className="flex items-center gap-3 overflow-x-auto pb-2 lg:pb-0">
+                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 border border-slate-800 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-white transition-all">
+                        <BarChart3 size={14} /> Meta-Audit
                     </button>
-                    <button
-                        onClick={() => handleExport('json')}
-                        className="px-4 py-2 rounded-lg bg-sky-500 text-slate-950 text-[10px] font-black hover:bg-sky-400 transition-all uppercase tracking-widest flex items-center gap-2 shadow-[0_0_15px_rgba(56,189,248,0.2)]"
-                    >
-                        <Zap size={14} /> Data Export (JSON)
+                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-sky-500 text-slate-950 text-[10px] font-black uppercase tracking-widest hover:bg-sky-400 transition-all shadow-lg shadow-sky-500/20">
+                        <Zap size={14} /> Sync Fabric
                     </button>
                 </div>
             </div>
 
-            {/* Framework Selector & Summary */}
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-                {/* Framework Navigation */}
-                <div className="lg:col-span-1 space-y-2">
-                    {(['nist', 'hipaa', 'iso'] as Tab[]).map((tab) => (
-                        <button
-                            key={tab}
-                            onClick={() => setActiveTab(tab)}
-                            className={clsx(
-                                "w-full flex flex-col p-4 rounded-xl border transition-all text-left group",
-                                activeTab === tab
-                                    ? "bg-sky-500/10 border-sky-500/50 shadow-[0_0_15px_rgba(56,189,248,0.1)]"
-                                    : "bg-slate-900/40 border-slate-800 hover:border-slate-700 hover:bg-slate-900/60"
-                            )}
-                        >
-                            <div className="flex items-center justify-between mb-2">
-                                <span className={clsx(
-                                    "text-[10px] font-black uppercase tracking-widest",
-                                    activeTab === tab ? "text-sky-400" : "text-slate-500"
-                                )}>
-                                    {tab === 'iso' ? 'ISO 27001' : tab}
-                                </span>
-                                {activeTab === tab && <div className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />}
-                            </div>
-                            <div className={clsx(
-                                "text-sm font-bold transition-colors mb-4",
-                                activeTab === tab ? "text-white" : "text-slate-400 group-hover:text-slate-200"
-                            )}>
-                                {frameworkDetails[tab].name}
-                            </div>
-                            <div className="flex items-center justify-between mt-auto">
-                                <div className="flex items-center gap-1.5">
-                                    <div className="h-1 w-12 bg-slate-800 rounded-full overflow-hidden">
-                                        <div
-                                            className={clsx("h-full rounded-full transition-all duration-1000", activeTab === tab ? "bg-sky-500" : "bg-slate-600")}
-                                            style={{ width: `${complianceSummary[tab].percentage}%` }}
-                                        />
-                                    </div>
-                                    <span className="text-[10px] font-mono font-bold text-slate-500">
-                                        {complianceSummary[tab].percentage}%
-                                    </span>
-                                </div>
-                                <ChevronRight size={14} className={clsx("transition-transform", activeTab === tab ? "text-sky-400 translate-x-1" : "text-slate-700")} />
-                            </div>
-                        </button>
-                    ))}
-                </div>
-
-                {/* Active Framework Deep Dive */}
+                {/* 1. Framework & Monitoring Sidebar */}
                 <div className="lg:col-span-3 space-y-4">
+                    <div className="p-1.5 rounded-xl border border-slate-800 bg-slate-900/40 glass">
+                        <div className="px-3 py-2 text-[9px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800/50 mb-1">Frameworks</div>
+                        {complianceSummary.map((c) => (
+                            <button
+                                key={c.framework}
+                                onClick={() => setActiveFramework(c.framework)}
+                                className={clsx(
+                                    "w-full flex items-center justify-between p-3 rounded-lg transition-all group mb-1 last:mb-0",
+                                    activeFramework === c.framework
+                                        ? "bg-sky-500/10 border border-sky-500/30"
+                                        : "hover:bg-slate-800/50 border border-transparent"
+                                )}
+                            >
+                                <div className="text-left">
+                                    <div className={clsx("text-[10px] font-black uppercase tracking-widest", activeFramework === c.framework ? "text-sky-400" : "text-slate-400 group-hover:text-slate-200")}>{c.framework}</div>
+                                    <div className="text-[9px] font-bold text-slate-500 mt-0.5">{c.controls} CONTROLS</div>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-xs font-mono font-black text-white">{c.score}%</div>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
 
-                    {/* Progress Matrix */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="card-hover rounded-xl p-5 bg-slate-900/20 border border-slate-800">
-                            <div className="flex items-center gap-2 mb-4">
-                                <BarChart3 size={16} className="text-sky-400" />
-                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Global Status</span>
+                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/20 glass">
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Real-time Sensors</h4>
+                            <Activity size={12} className="text-emerald-500 animate-pulse" />
+                        </div>
+                        <div className="space-y-3">
+                            <MonitorRow label="CloudTrail Pulse" status="stable" />
+                            <MonitorRow label="GuardDuty Ingest" status="stable" />
+                            <MonitorRow label="Config Drift" status="alert" />
+                        </div>
+                    </div>
+                </div>
+
+                {/* 2. Audit Workspace */}
+                <div className="lg:col-span-9 space-y-6">
+
+                    {/* High-level Status */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <ControlStat label="COMPLIANT" count={controls.filter(c => c.status === 'compliant').length} color="text-emerald-500" />
+                        <ControlStat label="NON-COMPLIANT" count={controls.filter(c => c.status === 'non-compliant').length} color="text-red-500" />
+                        <ControlStat label="EXEMPT/NA" count={0} color="text-slate-500" />
+                    </div>
+
+                    {/* Evidence Locker Workspace */}
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden glass shadow-2xl relative">
+                        <div className="p-5 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between gap-4 flex-wrap">
+                            <div className="flex items-center gap-3">
+                                <Archive size={18} className="text-sky-400" />
+                                <div>
+                                    <h3 className="text-sm font-black text-white uppercase tracking-widest">Evidence Locker</h3>
+                                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">Cryptographically Signed Audit Artifacts</p>
+                                </div>
                             </div>
-                            <div className="flex items-baseline gap-2">
-                                <span className="text-2xl font-black text-white">{stats.percentage}%</span>
-                                <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-tighter">Compliant</span>
-                            </div>
-                            <div className="mt-4 h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                                <div className="h-full bg-sky-500 rounded-full animate-grow-width" style={{ width: `${stats.percentage}%` }} />
+                            <div className="flex items-center gap-3 flex-1 min-w-[200px] max-w-sm">
+                                <div className="relative w-full">
+                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                                    <input
+                                        type="text"
+                                        value={search}
+                                        onChange={(e) => setSearch(e.target.value)}
+                                        placeholder="SEARCH CONTROLS..."
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 pl-9 pr-3 text-[10px] font-bold text-white uppercase focus:border-sky-500/50 outline-none transition-all"
+                                    />
+                                </div>
+                                <button className="p-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-400 hover:text-white transition-all">
+                                    <Filter size={14} />
+                                </button>
                             </div>
                         </div>
-                        <div className="card-hover rounded-xl p-5 bg-slate-900/20 border border-slate-800">
-                            <div className="flex items-center gap-2 mb-4">
-                                <Shield size={16} className="text-emerald-500" />
-                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Passed Controls</span>
-                            </div>
-                            <div className="flex items-baseline gap-2">
-                                <span className="text-2xl font-black text-white">{stats.pass}</span>
-                                <span className="text-sm font-bold text-slate-500 uppercase">/ {current.controls}</span>
-                            </div>
-                        </div>
-                        <div className="card-hover rounded-xl p-5 bg-slate-900/20 border border-slate-800">
-                            <div className="flex items-center gap-2 mb-4">
-                                <AlertCircle size={16} className="text-red-500" />
-                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Failed Controls</span>
-                            </div>
-                            <div className="flex items-baseline gap-2">
-                                <span className="text-2xl font-black text-white">{stats.fail}</span>
-                                <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest ml-1 animate-pulse">Needs Review</span>
-                            </div>
+
+                        <div className="overflow-x-auto custom-scrollbar">
+                            <table className="w-full text-left border-collapse">
+                                <thead className="bg-slate-950/80 border-b border-slate-800">
+                                    <tr>
+                                        <th className="px-6 py-4 text-[9px] font-black text-slate-500 uppercase tracking-widest">ID</th>
+                                        <th className="px-6 py-4 text-[9px] font-black text-slate-500 uppercase tracking-widest">CONTROL OBJECTIVE</th>
+                                        <th className="px-6 py-4 text-[9px] font-black text-slate-500 uppercase tracking-widest">VERIFIED EVIDENCE</th>
+                                        <th className="px-6 py-4 text-[9px] font-black text-slate-500 uppercase tracking-widest">POSTURE</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800/50">
+                                    {controls.map((ctrl, i) => (
+                                        <tr key={i} className="hover:bg-sky-500/[0.02] transition-all group">
+                                            <td className="px-6 py-4">
+                                                <span className="text-[11px] font-mono font-black text-sky-400/80">{ctrl.id}</span>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <div className="text-[11px] font-bold text-slate-200 group-hover:text-white transition-colors">{ctrl.title}</div>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <span className="text-[8px] font-black text-slate-600 uppercase tracking-tighter">Domain: {ctrl.domain}</span>
+                                                    <div className="w-1 h-1 rounded-full bg-slate-800" />
+                                                    <span className="text-[8px] font-black text-slate-600 uppercase tracking-tighter">Owner: SecOps</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <div className="flex flex-col gap-1.5">
+                                                    <div className="flex items-center gap-2 text-[9px] font-mono text-slate-500 group-hover:text-slate-300 transition-colors">
+                                                        <Lock size={10} className="text-emerald-500" />
+                                                        {Math.random().toString(16).slice(2, 10)}...sign
+                                                        <Download size={10} className="hover:text-sky-400 cursor-pointer ml-1" />
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 text-[8px] text-slate-600 font-bold uppercase tracking-tighter">
+                                                        <Clock size={8} /> Just now
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className={clsx(
+                                                    "text-[10px] font-black px-2.5 py-0.5 rounded border uppercase tracking-widest",
+                                                    ctrl.status === 'compliant'
+                                                        ? "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"
+                                                        : "text-red-500 border-red-500/20 bg-red-500/10 animate-pulse"
+                                                )}>
+                                                    {ctrl.status === 'compliant' ? 'Verified' : 'Failing'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
 
-                    {/* Framework Intel Section */}
-                    <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-                        <div className="flex items-start justify-between mb-8">
-                            <div>
-                                <h3 className="text-lg font-bold text-white mb-1">{current.name}</h3>
-                                <p className="text-xs text-slate-500 font-medium max-w-xl">{current.description}</p>
-                            </div>
-                            <div className="text-right">
-                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">
-                                    <Clock size={12} /> Last Ingested: {current.lastAudit}
-                                </div>
-                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                                    <Clock size={12} /> Next Review: {current.nextAudit}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* High-density Control List */}
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between px-4 py-2 text-[10px] font-black text-slate-600 uppercase tracking-widest border-b border-slate-800">
-                                <span>Control Identifier</span>
-                                <div className="flex gap-20">
-                                    <span className="w-16">MITRE</span>
-                                    <span className="w-24">STATUS</span>
-                                </div>
-                            </div>
-
-                            {[1, 2, 3, 4, 5].map((i) => (
-                                <div key={i} className="group flex items-center justify-between p-4 rounded-lg bg-slate-950/50 border border-slate-900 hover:border-slate-800 hover:bg-slate-900/50 transition-all cursor-pointer">
-                                    <div className="flex items-center gap-4">
-                                        <div className={clsx(
-                                            "w-2 h-2 rounded-full",
-                                            i === 2 ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" : "bg-emerald-500"
-                                        )} />
-                                        <div>
-                                            <div className="text-xs font-bold text-slate-200 group-hover:text-white transition-colors uppercase tracking-tight">
-                                                {activeTab.toUpperCase()}-{i === 1 ? 'AC-2' : i === 2 ? 'SC-7' : 'CM-3'} {i === 1 ? 'Account Management' : i === 2 ? 'Boundary Protection' : 'Configuration Change Control'}
-                                            </div>
-                                            <div className="text-[9px] font-mono text-slate-500 uppercase mt-1">Audit Group: System Architecture</div>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-center gap-12">
-                                        <span className="mitre-tag tracking-tighter">T1{100 + i}</span>
-                                        <div className="w-24 flex justify-end">
-                                            {i === 2 ? (
-                                                <div className="flex items-center gap-1.5 text-red-400">
-                                                    <AlertCircle size={14} />
-                                                    <span className="text-[9px] font-black uppercase tracking-widest">Failed</span>
-                                                </div>
-                                            ) : (
-                                                <div className="flex items-center gap-1.5 text-emerald-400">
-                                                    <CheckCircle2 size={14} />
-                                                    <span className="text-[9px] font-black uppercase tracking-widest">Passed</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        <button className="w-full mt-6 flex items-center justify-center gap-2 py-3 rounded-xl border border-slate-800 text-[10px] font-black text-slate-500 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-widest">
-                            View All {current.controls} Controls Analysis <ExternalLink size={12} />
+                    <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter italic">Total {current.controls} controls available in framework definition.</p>
+                        <button className="flex items-center gap-2 text-[10px] font-black text-sky-400 hover:text-white uppercase tracking-widest transition-all">
+                            View Full Audit Report <ExternalLink size={12} />
                         </button>
                     </div>
                 </div>
             </div>
+        </div>
+    );
+}
 
+// ─── GRC 2.0 COMPONENTS ───────────────────────────────────────────────────────
+
+function MonitorRow({ label, status }: { label: string; status: 'stable' | 'alert' }) {
+    return (
+        <div className="flex items-center justify-between text-[10px] font-bold group">
+            <span className="text-slate-500 uppercase tracking-tighter group-hover:text-slate-300 transition-colors">{label}</span>
+            <div className="flex items-center gap-2">
+                <span className={clsx("text-[8px] uppercase font-black", status === 'stable' ? "text-emerald-500" : "text-amber-500")}>
+                    {status === 'stable' ? 'LOCKED' : 'DRIFT'}
+                </span>
+                <div className={clsx("w-1.5 h-1.5 rounded-full shadow-[0_0_5px_currentColor]", status === 'stable' ? "text-emerald-500 bg-emerald-500" : "text-amber-500 bg-amber-500 animate-pulse")} />
+            </div>
+        </div>
+    );
+}
+
+function ControlStat({ label, count, color }: { label: string; count: number; color: string }) {
+    return (
+        <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/20 glass group hover:border-slate-700 transition-all">
+            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">{label}</div>
+            <div className={clsx("text-2xl font-black", color)}>{count}</div>
         </div>
     );
 }

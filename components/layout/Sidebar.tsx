@@ -5,16 +5,18 @@ import { usePathname } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import {
     LayoutDashboard, Shield, Bot, FileCheck, Settings,
-    ChevronLeft, ChevronRight, ShieldCheck, Bell, X
+    ChevronLeft, ChevronRight, ShieldCheck, Bell, X, Radar, ShieldAlert, Sparkles, Zap
 } from 'lucide-react';
 import clsx from 'clsx';
 
 const navItems = [
-    { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/scans', label: 'Scan Results', icon: Shield },
-    { href: '/assistant', label: 'AI Assistant', icon: Bot },
-    { href: '/compliance', label: 'Compliance', icon: FileCheck },
-    { href: '/settings', label: 'Settings', icon: Settings },
+    { href: '/', label: 'General Dashboard', icon: LayoutDashboard },
+    { href: '/hunting', label: 'Threat Hunting', icon: Radar },
+    { href: '/remediation', label: 'Remediation Engine', icon: Zap },
+    { href: '/scans', label: 'Scan Results', icon: ShieldAlert },
+    { href: '/assistant', label: 'Security Assistant', icon: Sparkles },
+    { href: '/compliance', label: 'Compliance Audit', icon: ShieldCheck },
+    { href: '/settings', label: 'Platform Settings', icon: Settings },
 ];
 
 export default function Sidebar() {
@@ -24,7 +26,7 @@ export default function Sidebar() {
     return (
         <aside
             className={clsx(
-                'fixed inset-y-0 left-0 z-40 flex flex-col transition-all duration-300 border-r',
+                'flex flex-col transition-all duration-300 border-r relative h-full flex-shrink-0',
                 sidebarOpen ? 'w-64' : 'w-16'
             )}
             style={{ background: 'var(--primary)', borderColor: 'var(--border)' }}
