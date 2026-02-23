@@ -101,11 +101,36 @@ export const threatIntel = [
     { id: 4, type: 'Email', value: 'billing@aws-secure.com', reputation: 'malicious', source: 'Phishing Campaign', lastSeen: '1h ago' },
 ];
 
-export const complianceSummary = {
-    hipaa: { pass: 12, fail: 2, percentage: 85 },
-    nist: { pass: 45, fail: 8, percentage: 84 },
-    iso: { pass: 30, fail: 5, percentage: 86 }
-};
+export const complianceSummary = [
+    {
+        framework: 'nist',
+        score: 84,
+        controls: 156,
+        details: [
+            { id: 'AC-2', title: 'Account Management', status: 'compliant', domain: 'Access Control' },
+            { id: 'AU-12', title: 'Audit Generation', status: 'non-compliant', domain: 'Audit and Accountability' },
+            { id: 'IA-2', title: 'Identification and Authentication', status: 'compliant', domain: 'Identification' }
+        ]
+    },
+    {
+        framework: 'hipaa',
+        score: 85,
+        controls: 42,
+        details: [
+            { id: '164.308(a)(1)', title: 'Security Management Process', status: 'compliant', domain: 'Administrative' },
+            { id: '164.312(a)(1)', title: 'Access Control', status: 'non-compliant', domain: 'Technical' }
+        ]
+    },
+    {
+        framework: 'iso',
+        score: 86,
+        controls: 114,
+        details: [
+            { id: 'A.9.1.1', title: 'Access Control Policy', status: 'compliant', domain: 'Access Control' },
+            { id: 'A.12.4.1', title: 'Event Logging', status: 'compliant', domain: 'Logging' }
+        ]
+    }
+];
 
 export const riskTrendData = Array.from({ length: 30 }).map((_, i) => ({
     date: `Feb ${i + 1}`,
