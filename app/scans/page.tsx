@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import { mockFindings, type Finding, type Severity, type ResourceType, type FindingStatus } from '@/lib/mock-data';
 import { useAppStore } from '@/lib/store';
 import { Search, Filter, X, ChevronDown, ChevronUp, ExternalLink, Terminal, Code2 } from 'lucide-react';
@@ -161,7 +161,7 @@ export default function ScansPage() {
                             </thead>
                             <tbody>
                                 {filtered.map((f) => (
-                                    <>
+                                    <Fragment key={f.id}>
                                         <tr
                                             key={f.id}
                                             className="border-b cursor-pointer transition-colors hover:opacity-80"
@@ -213,7 +213,7 @@ export default function ScansPage() {
                                                 </td>
                                             </tr>
                                         )}
-                                    </>
+                                    </Fragment>
                                 ))}
                             </tbody>
                         </table>

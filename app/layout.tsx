@@ -12,21 +12,14 @@ export const metadata: Metadata = {
   description: 'Enterprise-grade cloud-native security misconfiguration detection, AI-powered remediation, and compliance reporting platform.',
 };
 
+import MainLayout from '@/components/layout/MainLayout';
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={inter.variable} suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          <div className="flex h-screen overflow-hidden">
-            <Sidebar />
-            {/* Main content — ml-64 when sidebar open, ml-16 when collapsed */}
-            <div className="flex-1 flex flex-col min-w-0 ml-64 transition-all duration-300">
-              <Header />
-              <main className="flex-1 overflow-y-auto p-6" style={{ background: 'var(--bg)' }}>
-                {children}
-              </main>
-            </div>
-          </div>
+          <MainLayout>{children}</MainLayout>
         </ThemeProvider>
       </body>
     </html>

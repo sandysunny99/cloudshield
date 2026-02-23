@@ -2,133 +2,100 @@
 
 import { usePathname } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
-import { Bell, Moon, Sun, Menu, Shield, ChevronDown } from 'lucide-react';
+import { Bell, Moon, Sun, X, Search } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useState, useEffect } from 'react';
+import clsx from 'clsx';
 
-const pageTitles: Record<string, { title: string; subtitle: string }> = {
-    '/': { title: 'Security Dashboard', subtitle: 'Overview of your cloud security posture' },
-    '/scans': { title: 'Scan Results', subtitle: 'All vulnerabilities and misconfigurations' },
-    '/assistant': { title: 'AI Remediation', subtitle: 'AI-powered security remediation assistant' },
-    '/compliance': { title: 'Compliance Reports', subtitle: 'HIPAA · NIST 800-53 · ISO 27001' },
-    '/settings': { title: 'Settings', subtitle: 'Account, notifications, and configuration' },
-};
-
-const roleColors: Record<string, string> = {
-    admin: '#FF6B6B',
-    security: '#2D9CDB',
-    developer: '#27AE60',
-    auditor: '#F2994A',
-};
+const navItems = [
+    { href: '/', label: 'Dashboard' },
+    { href: '/scans', label: 'Scan Results' },
+    { href: '/assistant', label: 'AI Assistant' },
+    { href: '/compliance', label: 'Compliance' },
+    { href: '/settings', label: 'Settings' },
+];
 
 export default function Header() {
     const pathname = usePathname();
     const { userRole, userName, toasts, removeToast } = useAppStore();
     const { theme, setTheme, resolvedTheme } = useTheme();
     const [mounted, setMounted] = useState(false);
-    const [showUserMenu, setShowUserMenu] = useState(false);
-    const pageInfo = pageTitles[pathname] ?? { title: 'CloudShield', subtitle: '' };
 
     useEffect(() => setMounted(true), []);
 
+    const getPageTitle = () => {
+        const item = navItems.find(i => i.href === pathname);
+        return item ? item.label : 'CloudShield';
+    };
+
     return (
-        <>
-            <header
-                className="h-16 flex items-center justify-between px-6 border-b sticky top-0 z-30"
-                style={{ background: 'var(--card)', borderColor: 'var(--border)' }}
-            >
-                {/* Page title */}
-                <div>
-                    <h1 className="font-bold text-lg leading-tight" style={{ color: 'var(--text)' }}>
-                        {pageInfo.title}
-                    </h1>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{pageInfo.subtitle}</p>
+        <header className="h-16 border-b flex items-center justify-between px-6 sticky top-0 z-30 transition-all" style={{ background: 'var(--primary)', borderColor: 'var(--border)' }}>
+            <div className="flex items-center gap-4">
+                <h1 className="text-sm font-bold tracking-widest text-white uppercase">{getPageTitle()}</h1>
+                <div className="h-4 w-px bg-slate-800" />
+                <div className="flex items-center gap-2 text-[10px] uppercase font-bold text-slate-500 tracking-widest leading-none">
+                    <div className="w-1 h-1 rounded-full bg-sky-500 animate-pulse" />
+                    Live System
+                </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+                {/* Search Container */}
+                <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-700 transition-colors cursor-text group">
+                    <Search size={14} className="group-hover:text-slate-300 transition-colors" />
+                    <span className="text-[11px] font-medium">Search Intel...</span>
+                    <kbd className="text-[10px] font-mono bg-slate-800 px-1 rounded border border-slate-700 ml-2">⌘K</kbd>
                 </div>
 
-                {/* Right controls */}
-                <div className="flex items-center gap-3">
-                    {/* Dark mode toggle */}
+                <div className="flex items-center gap-1 border-l border-slate-800 pl-4">
                     {mounted && (
                         <button
                             onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-                            className="w-9 h-9 rounded-lg flex items-center justify-center transition-all hover:scale-105"
-                            style={{ background: 'var(--bg)', color: 'var(--text-muted)' }}
-                            title="Toggle dark mode"
+                            className="p-2 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                         >
                             {resolvedTheme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
                         </button>
                     )}
 
-                    {/* Notifications */}
-                    <button
-                        className="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all hover:scale-105"
-                        style={{ background: 'var(--bg)', color: 'var(--text-muted)' }}
-                    >
+                    <button className="p-2 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors relative">
                         <Bell size={16} />
-                        <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#FF6B6B] animate-pulse-slow" />
+                        <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-sky-500 rounded-full border border-slate-950" />
                     </button>
 
-                    {/* User menu */}
-                    <div className="relative">
-                        <button
-                            onClick={() => setShowUserMenu(!showUserMenu)}
-                            className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg transition-all hover:opacity-80"
-                            style={{ background: 'var(--bg)' }}
-                        >
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                                style={{ background: `linear-gradient(135deg, ${roleColors[userRole]}, ${roleColors[userRole]}aa)` }}>
-                                {userName.split(' ').map(n => n[0]).join('').slice(0, 2)}
-                            </div>
-                            <div className="text-left hidden sm:block">
-                                <div className="text-xs font-semibold leading-tight" style={{ color: 'var(--text)' }}>{userName}</div>
-                                <div className="text-xs capitalize" style={{ color: 'var(--text-muted)' }}>{userRole}</div>
-                            </div>
-                            <ChevronDown size={12} style={{ color: 'var(--text-muted)' }} />
-                        </button>
+                    <div className="h-6 w-px bg-slate-800 mx-2" />
 
-                        {showUserMenu && (
-                            <div
-                                className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-xl border py-1 z-50"
-                                style={{ background: 'var(--card)', borderColor: 'var(--border)' }}
-                            >
-                                {(['admin', 'security', 'developer', 'auditor'] as const).map(role => (
-                                    <button
-                                        key={role}
-                                        onClick={() => { useAppStore.getState().setUserRole(role); setShowUserMenu(false); }}
-                                        className="w-full text-left px-4 py-2 text-xs capitalize transition-colors hover:opacity-80"
-                                        style={{
-                                            color: userRole === role ? roleColors[role] : 'var(--text)',
-                                            fontWeight: userRole === role ? 600 : 400,
-                                        }}
-                                    >
-                                        {role === 'admin' ? '👑 ' : role === 'security' ? '🛡️ ' : role === 'developer' ? '💻 ' : '📋 '}{role}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
+                    <div className="flex items-center gap-3 pl-1">
+                        <div className="text-right hidden sm:block">
+                            <div className="text-[11px] font-bold text-white leading-none whitespace-nowrap">{userName}</div>
+                            <div className="text-[9px] font-bold text-sky-500 uppercase mt-1 leading-none tracking-widest">{userRole}</div>
+                        </div>
+                        <div className="w-8 h-8 rounded bg-slate-800 border border-slate-700 flex items-center justify-center text-[10px] font-bold text-sky-400 overflow-hidden relative group cursor-pointer hover:border-sky-500 transition-all">
+                            SK
+                            <div className="absolute inset-x-0 bottom-0 h-0.5 bg-sky-400 scale-x-0 group-hover:scale-x-100 transition-transform origin-left" />
+                        </div>
                     </div>
                 </div>
-            </header>
+            </div>
 
-            {/* Toast notifications */}
-            <div className="toast-container">
-                {toasts.map(toast => (
+            {/* Toast Container */}
+            <div className="toast-container fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+                {toasts.map((toast) => (
                     <div
                         key={toast.id}
-                        className="flex items-center gap-3 px-4 py-3 rounded-xl shadow-xl border animate-fade-in min-w-64 max-w-sm"
-                        style={{
-                            background: 'var(--card)',
-                            borderColor: toast.type === 'success' ? '#27AE60' : toast.type === 'error' ? '#FF6B6B' : '#2D9CDB',
-                            borderLeftWidth: 4,
-                        }}
+                        className={clsx(
+                            'px-4 py-2.5 rounded border shadow-2xl flex items-center gap-3 animate-fade-in glass min-w-[280px]',
+                            toast.type === 'success' && 'border-emerald-500/30 text-emerald-400',
+                            toast.type === 'error' && 'border-red-500/30 text-red-400',
+                            toast.type === 'info' && 'border-sky-500/30 text-sky-400'
+                        )}
                     >
-                        <span className="text-sm flex-1" style={{ color: 'var(--text)' }}>{toast.message}</span>
-                        <button onClick={() => removeToast(toast.id)} style={{ color: 'var(--text-muted)' }}>
-                            <Shield size={14} />
+                        <span className="text-[11px] font-bold uppercase tracking-wider flex-1">{toast.message}</span>
+                        <button onClick={() => removeToast(toast.id)} className="text-slate-500 hover:text-white transition-colors">
+                            <X size={14} />
                         </button>
                     </div>
                 ))}
             </div>
-        </>
+        </header>
     );
 }

@@ -24,28 +24,28 @@ export default function Sidebar() {
     return (
         <aside
             className={clsx(
-                'fixed inset-y-0 left-0 z-40 flex flex-col transition-all duration-300',
+                'fixed inset-y-0 left-0 z-40 flex flex-col transition-all duration-300 border-r',
                 sidebarOpen ? 'w-64' : 'w-16'
             )}
-            style={{ background: 'var(--primary)' }}
+            style={{ background: 'var(--primary)', borderColor: 'var(--border)' }}
         >
             {/* Logo */}
-            <div className="flex items-center h-16 px-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+            <div className="flex items-center h-16 px-4 border-b" style={{ borderColor: 'var(--border)' }}>
                 <div className="flex items-center gap-3 min-w-0">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #2D9CDB, #1a6fa8)' }}>
+                    <div className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center animate-glow" style={{ background: 'linear-gradient(135deg, #38bdf8, #0ea5e9)' }}>
                         <ShieldCheck size={18} className="text-white" />
                     </div>
-                    {sidebarOpen && (
-                        <div className="min-w-0 animate-fade-in">
-                            <div className="font-bold text-white text-sm leading-tight">CloudShield</div>
-                            <div className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>Security Platform</div>
-                        </div>
-                    )}
                 </div>
+                {sidebarOpen && (
+                    <div className="ml-3 min-w-0 animate-fade-in">
+                        <div className="font-bold text-slate-100 text-sm leading-tight tracking-tight uppercase">CloudShield</div>
+                        <div className="text-[10px] uppercase font-bold text-sky-500/80 tracking-widest">Sentinel Core</div>
+                    </div>
+                )}
             </div>
 
             {/* Nav */}
-            <nav className="flex-1 py-4 overflow-y-auto">
+            <nav className="flex-1 py-6 overflow-y-auto space-y-1">
                 {navItems.map(({ href, label, icon: Icon }) => {
                     const active = pathname === href;
                     return (
@@ -53,18 +53,17 @@ export default function Sidebar() {
                             key={href}
                             href={href}
                             className={clsx(
-                                'flex items-center gap-3 mx-2 my-0.5 px-3 py-2.5 rounded-lg transition-all duration-200 group',
+                                'flex items-center gap-3 mx-3 px-3 py-2 rounded-md transition-all duration-150 group relative',
                                 active
-                                    ? 'text-white'
-                                    : 'text-white/60 hover:text-white hover:bg-white/8'
+                                    ? 'text-sky-400 bg-sky-400/5 font-semibold'
+                                    : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/50'
                             )}
-                            style={active ? { background: 'rgba(45,156,219,0.2)', borderLeft: '3px solid #2D9CDB' } : {}}
                             title={!sidebarOpen ? label : undefined}
                         >
-                            <Icon size={18} className={clsx('flex-shrink-0', active ? 'text-[#4FC3F7]' : '')} />
-                            {sidebarOpen && <span className="text-sm font-medium animate-fade-in">{label}</span>}
-                            {sidebarOpen && active && (
-                                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[#4FC3F7]" />
+                            <Icon size={18} className={clsx('flex-shrink-0 transition-colors', active ? 'text-sky-400' : 'group-hover:text-slate-200')} />
+                            {sidebarOpen && <span className="text-sm truncate">{label}</span>}
+                            {active && (
+                                <div className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-sky-400 rounded-r-full shadow-[0_0_8px_rgba(56,189,248,0.5)]" />
                             )}
                         </Link>
                     );
@@ -72,21 +71,29 @@ export default function Sidebar() {
             </nav>
 
             {/* Version */}
-            {sidebarOpen && (
-                <div className="p-4 border-t animate-fade-in" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-                    <div className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>CloudShield v1.0.0</div>
-                    <div className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.2)' }}>Enterprise Edition</div>
-                </div>
-            )}
+            <div className="p-4 border-t" style={{ borderColor: 'var(--border)' }}>
+                {sidebarOpen ? (
+                    <div className="animate-fade-in">
+                        <div className="text-[10px] font-mono font-bold tracking-tighter" style={{ color: 'var(--text-muted)' }}>V1.0.4-STABLE</div>
+                        <div className="flex items-center gap-2 mt-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            <span className="text-[10px] uppercase font-bold text-emerald-500/80">System Online</span>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex items-center justify-center">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    </div>
+                )}
+            </div>
 
             {/* Collapse button */}
             <button
                 onClick={toggleSidebar}
-                className="absolute -right-3 top-20 w-6 h-6 rounded-full border flex items-center justify-center bg-white shadow-md hover:shadow-lg transition-shadow z-50"
-                style={{ borderColor: 'var(--border)' }}
+                className="absolute -right-3 top-8 w-6 h-6 rounded border flex items-center justify-center bg-[#0f172a] border-slate-700 text-slate-400 hover:text-white hover:border-sky-500 transition-all z-50 shadow-xl"
                 aria-label="Toggle sidebar"
             >
-                {sidebarOpen ? <ChevronLeft size={12} className="text-gray-600" /> : <ChevronRight size={12} className="text-gray-600" />}
+                {sidebarOpen ? <ChevronLeft size={10} /> : <ChevronRight size={10} />}
             </button>
         </aside>
     );
