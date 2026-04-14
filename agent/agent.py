@@ -12,7 +12,7 @@ import hashlib
 from urllib.parse import urlparse
 
 # Configuration
-API_URL = os.environ.get("CLOUDSHIELD_API_URL", "http://localhost:5000/api/agent-scan")
+API_URL = os.environ.get("CLOUDSHIELD_API_URL", "https://cloudshield-tya3.onrender.com/api/agent-scan")
 parsed_url = urlparse(API_URL)
 API_PATH = parsed_url.path
 AGENT_KEY = os.environ.get("AGENT_KEY", "default-agent-key-123")
