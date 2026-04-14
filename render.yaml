@@ -13,3 +13,9 @@ services:
         value: default-agent-key-123
       - key: ALLOWED_ORIGINS
         value: https://cloudshield-vtah.vercel.app,http://localhost:5173
+      - key: CF_API_TOKEN
+        value: your-cloudflare-api-token
+      - key: CF_ZONE_ID
+        value: your-cloudflare-zone-id
+      - key: CF_ACCOUNT_ID
+        value: your-cloudflare-account-id
