@@ -72,8 +72,11 @@ def create_app():
     # ── SOC Event Timeline (in-memory, last 100 events) ──
     SOC_TIMELINE = []
 
+    # ── Attack Rate Tracker ──
+    ATTACK_TRACKER = {"rate_window": [], "peak_rate": 0}
+
     def add_soc_event(level: str, message: str):
-        """Thread-safe append to the SOC timeline."""
+        """Append to SOC timeline and print structured log."""
         entry = {
             "level": level,
             "message": message,
@@ -82,7 +85,7 @@ def create_app():
         SOC_TIMELINE.insert(0, entry)
         if len(SOC_TIMELINE) > 100:
             SOC_TIMELINE.pop()
-        print(f"[SOC-{level}] {message}")
+        print(f"[{level}] {message}")
 
     @app.before_request
     def log_request_info():
@@ -225,8 +228,18 @@ def create_app():
         print(f"[SECURITY][FAILED_AUTH] IP={ip} Attempts={record['count']}/5")
         add_soc_event("WARNING", f"Bad auth attempt from {ip} — attempt {record['count']}/5")
 
+        # Track attack rate (rolling 60-second window)
+        now_ts = time.time()
+        ATTACK_TRACKER["rate_window"].append(now_ts)
+        ATTACK_TRACKER["rate_window"] = [
+            t for t in ATTACK_TRACKER["rate_window"] if now_ts - t < 60
+        ]
+        current_rate = len(ATTACK_TRACKER["rate_window"])
+        if current_rate > ATTACK_TRACKER["peak_rate"]:
+            ATTACK_TRACKER["peak_rate"] = current_rate
+
         if record["count"] >= 5 and ip not in BLOCKED_IPS:
-            print(f"[CRITICAL] Blocking IP {ip}")
+            print(f"[CRITICAL] Blocking IP {ip} after 5 failed auth attempts")
             now = time.time()
             BLOCKED_IPS[ip] = {"rule_id": None, "banned_at": now, "expires_at": now + 3600}
             add_soc_event("CRITICAL", f"IP {ip} auto-blocked for repeated spoofing (5 failed auth attempts).")
@@ -235,8 +248,8 @@ def create_app():
     @app.route("/api/security-metrics", methods=["GET"])
     def api_security_metrics():
         try:
-            active_blocks = []
             now = time.time()
+            active_blocks = []
             for ip, data in BLOCKED_IPS.items():
                 active_blocks.append({
                     "ip": ip,
@@ -253,11 +266,19 @@ def create_app():
                         "first_attempt": tr["first_attempt"]
                     })
 
+            # Compute current attack rate (rolling 60s window)
+            ATTACK_TRACKER["rate_window"] = [
+                t for t in ATTACK_TRACKER["rate_window"] if now - t < 60
+            ]
+            current_rate = len(ATTACK_TRACKER["rate_window"])
+
             return jsonify({
                 "status": "success",
                 "metrics": {
                     "total_blocked": len(active_blocks),
                     "total_attack_ips": len(attacks),
+                    "attack_rate": current_rate,
+                    "peak_attack_rate": ATTACK_TRACKER["peak_rate"],
                     "blocked_ips": active_blocks,
                     "recent_attacks": attacks
                 }

@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/src/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <!-- Header -->
@@ -17,27 +17,47 @@
             <div class="logo">
                 <span class="shield-icon">🛡️</span>
                 <h1>CloudShield</h1>
-                <span class="subtitle">Unified Detection & Remediation</span>
+                <span class="subtitle">Unified Detection &amp; Remediation</span>
             </div>
             <div class="header-actions">
-                <button id="btn-scan" class="btn btn-primary" onclick="runScan()">
+                <button id="btn-scan" class="btn btn-primary" onclick="runScan()" aria-label="Run full security scan">
                     <span class="btn-icon">⚡</span> Run Scan
                 </button>
-                <button id="btn-demo" class="btn btn-accent" onclick="runDemo()">
+                <button id="btn-demo" class="btn btn-accent" onclick="runDemo()" aria-label="Run before/after demo scan">
                     <span class="pulse-dot"></span> Live Scan
                 </button>
-                <button class="btn btn-outline" id="btn-paste-panel">
-                    <span class="btn-icon">📋</span> Paste & Scan
+                <button class="btn btn-outline" id="btn-paste-panel" aria-label="Open paste &amp; scan panel">
+                    <span class="btn-icon">📋</span> Paste &amp; Scan
                 </button>
-                <button class="btn btn-outline" id="btn-storage-panel">
+                <button class="btn btn-outline" id="btn-storage-panel" aria-label="Open cloud storage scanner">
                     <span class="btn-icon">☁️</span> Storage
                 </button>
-                <button class="btn btn-outline" id="btn-telemetry-panel">
+                <button class="btn btn-outline" id="btn-telemetry-panel" aria-label="Open agent telemetry panel">
                     <span class="btn-icon">💻</span> Endpoints
+                </button>
+                <button id="btn-export-report" class="btn btn-outline" onclick="exportReport()" aria-label="Download full security report JSON">
+                    <span class="btn-icon">📥</span> Export Report
                 </button>
             </div>
         </div>
     </header>
+
+    <!-- Global Status Bar -->
+    <div id="global-status-bar" class="status-bar">
+        <div class="status-bar-inner">
+            <span id="sb-system-status" class="sb-status">🟢 System Healthy</span>
+            <span class="sb-sep">|</span>
+            <span class="sb-item">Agents: <strong id="sb-agent-count">—</strong></span>
+            <span class="sb-sep">|</span>
+            <span class="sb-item">Active Threats: <strong id="sb-threat-count">—</strong></span>
+            <span class="sb-sep">|</span>
+            <span class="sb-item">Last Scan: <span id="sb-last-scan">Never</span></span>
+            <span class="sb-flex"></span>
+            <span class="sb-item sb-hint">Press <kbd>Enter</kbd> to scan &bull; <kbd>Esc</kbd> to close panels</span>
+            <span class="sb-sep">|</span>
+            <span class="sb-item" style="color:var(--text-muted);font-size:0.72rem">⏱ <span id="sb-last-updated">—</span></span>
+        </div>
+    </div>
 
     <main id="dashboard-main">
         <!-- Config Paste Panel -->
@@ -144,8 +164,17 @@ Example JSON:
                 </div>
             </div>
 
-            <div id="telemetry-loading" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
-                Waiting for agent connections...
+            <div id="telemetry-loading" style="padding:1.5rem 0;">
+                <div class="skeleton-agent-card">
+                    <div class="skel-header">
+                        <div class="skel-line" style="width:40%;height:14px;"></div>
+                        <div class="skel-line" style="width:20%;height:20px;"></div>
+                    </div>
+                    <div class="skel-line" style="width:70%;height:10px;margin-top:0.6rem"></div>
+                    <div class="skel-line" style="width:55%;height:10px;"></div>
+                    <div class="skel-line" style="width:80%;height:7px;margin-top:0.9rem"></div>
+                    <div class="skel-line" style="width:60%;height:7px;"></div>
+                </div>
             </div>
             
             <div id="fleet-controls" style="display: none; justify-content: space-between; align-items: center; margin-top: 1rem; background: rgba(0,0,0,0.2); padding: 0.75rem 1rem; border-radius: 4px; border: 1px solid var(--border-glass);">
@@ -193,6 +222,28 @@ Example JSON:
                     <div class="card-icon">⚠️</div>
                     <div class="card-value" id="metric-attack-ips">0</div>
                     <div class="card-label">Spoofing Origins</div>
+                </div>
+                <div class="card" style="border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.04);">
+                    <div class="card-icon">🚨</div>
+                    <div class="card-value" id="metric-attack-rate">0</div>
+                    <div class="card-label">Attack Rate (req/min)</div>
+                </div>
+                <div class="card" style="border-color:rgba(249,115,22,0.3);background:rgba(249,115,22,0.04);">
+                    <div class="card-icon">🔥</div>
+                    <div class="card-value" id="metric-peak-rate">0</div>
+                    <div class="card-label">Peak Rate</div>
+                </div>
+            </div>
+
+            <!-- Attack Mini Charts -->
+            <div style="margin-top:1.5rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+                <div class="chart-card">
+                    <h3>Attack Rate Over Time</h3>
+                    <canvas id="attack-rate-chart" height="110"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Risk Score Trend</h3>
+                    <canvas id="risk-trend-chart" height="110"></canvas>
                 </div>
             </div>
 
@@ -358,6 +409,17 @@ Example JSON:
             <div id="remediation-container" class="remediation-container"></div>
         </section>
 
+        <!-- Recent Scans History -->
+        <section id="scan-history-section" class="section">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+                <h2 class="section-title">🕒 Recent Scans</h2>
+                <button class="btn btn-sm btn-outline" onclick="clearScanHistory()" aria-label="Clear scan history">🗑️ Clear History</button>
+            </div>
+            <div id="scan-history-list" class="scan-history-container">
+                <div class="scan-history-empty">No scan history yet. Run a scan or demo to begin.</div>
+            </div>
+        </section>
+
         <!-- Execution Log -->
         <section id="log-section" class="section">
             <h2 class="section-title">Execution Log</h2>
@@ -383,7 +445,8 @@ Example JSON:
     </main>
 
     <footer>
-        <p>CloudShield — DevSecOps Pipeline Dashboard • No AI/LLM • Deterministic Analysis</p>
+        <p>CloudShield v3 &mdash; DevSecOps Pipeline Dashboard &bull; No AI/LLM &bull; Deterministic Analysis</p>
+        <p style="margin-top:0.3rem;font-size:0.72rem;color:var(--text-muted);">Keyboard: <kbd style="font-family:monospace;background:rgba(255,255,255,0.08);padding:0.1rem 0.3rem;border-radius:3px;">Enter</kbd> Run Scan &bull; <kbd style="font-family:monospace;background:rgba(255,255,255,0.08);padding:0.1rem 0.3rem;border-radius:3px;">Esc</kbd> Close Panel</p>
     </footer>
 
     <div id="toast-container" class="toast-container"></div>

@@ -800,3 +800,101 @@ footer {
     border-color: rgba(255,255,255,0.2);
     color: var(--text-primary);
 }
+
+/* ── Global Status Bar ── */
+.status-bar {
+    background: var(--bg-secondary);
+    border-bottom: 2px solid rgba(255,255,255,0.05);
+    padding: 0.4rem 2rem;
+    position: sticky;
+    top: 0;
+    z-index: 101;
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Inter', monospace;
+}
+.status-bar-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.sb-status { display: flex; align-items: center; gap: 0.3rem; }
+.sb-item { color: var(--text-secondary); }
+.sb-item strong { color: var(--text-primary); }
+.sb-sep { color: var(--border-glass); margin: 0 0.2rem; }
+.sb-flex { flex-grow: 1; }
+.sb-hint { font-weight: 400; color: var(--text-muted); }
+
+/* ── Skeleton Loaders ── */
+.skeleton-agent-card {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border-glass);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    position: relative;
+    overflow: hidden;
+}
+.skeleton-agent-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent);
+    animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer {
+    100% { transform: translateX(100%); }
+}
+.skel-header { display: flex; justify-content: space-between; margin-bottom: 1rem; }
+.skel-line {
+    background: rgba(255,255,255,0.05);
+    border-radius: 4px;
+}
+
+/* ── Scan History ── */
+.scan-history-container {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.scan-history-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-muted);
+    font-style: italic;
+    background: var(--bg-glass);
+    border-radius: var(--radius-sm);
+    border: 1px dashed var(--border-glass);
+}
+.scan-history-item {
+    background: var(--bg-glass);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-sm);
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.scan-history-item:hover, .scan-history-item:focus {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-card);
+    border-color: var(--accent-blue);
+    outline: none;
+}
+.shi-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+.shi-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+}
