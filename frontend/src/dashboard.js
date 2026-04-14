@@ -208,7 +208,7 @@ async function scanRawConfig() {
     setButtonsDisabled(false);
 }
 
-// ── NEW: Multi-Cloud Single Storage Check ──
+// ── NEW: Enterprise Storage Security Check ──
 async function checkS3Bucket() {
     const bucketName = document.getElementById('s3-bucket-name').value.trim();
     const providerEle = document.querySelector('input[name="cloud-provider"]:checked');
@@ -218,20 +218,20 @@ async function checkS3Bucket() {
 
     if (!bucketName) {
         resultDiv.style.display = 'block';
-        resultDiv.innerHTML = '<span style="color:var(--color-critical)">❌ Please enter a bucket/container name</span>';
+        resultDiv.innerHTML = '<span style="color:var(--color-critical)">❌ Please enter a resource name</span>';
         return;
     }
 
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Checking...';
+    btn.innerHTML = '<span class="spinner"></span> Analyzing...';
     resultDiv.style.display = 'block';
-    resultDiv.innerHTML = `<span style="color:var(--color-info)">⏳ Checking ${provider.toUpperCase()} configuration...</span>`;
+    resultDiv.innerHTML = `<span style="color:var(--color-info)">⏳ Analyzing ${provider.toUpperCase()} security posture...</span>`;
 
     try {
-        const res = await fetch(`${API_BASE}/api/check-bucket`, {
+        const res = await fetch(`${API_BASE}/api/check-storage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider: provider, bucket: bucketName })
+            body: JSON.stringify({ provider: provider, resource: bucketName })
         });
         
         const json = await res.json();
@@ -245,16 +245,34 @@ async function checkS3Bucket() {
             const statusText = isPublic ? 'PUBLICLY ACCESSIBLE' : 'SECURE (Private)';
             const providerTag = `<span class="badge ${json.provider === 'aws' ? 'badge-medium' : json.provider === 'azure' ? 'badge-info' : 'badge-high'}" style="margin-right:0.5rem">${json.provider.toUpperCase()}</span>`;
             
+            let extraDetails = '';
+            if (isPublic && json.remediation && json.remediation !== 'No action required.') {
+                extraDetails = `
+                    <div style="margin-top:0.75rem; padding-top:0.75rem; border-top:1px solid var(--border-glass);">
+                        <div style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:0.25rem;">Exposure Type</div>
+                        <div style="margin-bottom:0.75rem;"><strong>${escapeHtml(json.exposureType)}</strong></div>
+                        
+                        <div style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:0.25rem;">Details</div>
+                        <div style="margin-bottom:0.75rem;">${escapeHtml(json.details)}</div>
+                        
+                        <div style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:0.25rem;">Remediation Command</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3); padding:0.5rem; border-radius:4px; font-family:monospace; font-size:0.85rem;">
+                            <code>${escapeHtml(json.remediation)}</code>
+                            <button class="btn btn-sm" onclick="copyCommand(this)" style="padding:0.25rem 0.5rem; font-size:0.75rem;">Copy</button>
+                        </div>
+                    </div>
+                `;
+            }
+
             resultDiv.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div>${providerTag}<strong>Bucket:</strong> <code>${escapeHtml(json.bucket)}</code></div>
+                    <div>${providerTag}<strong>Resource:</strong> <code>${escapeHtml(json.resource)}</code></div>
+                    <span class="badge ${json.risk === 'Critical' ? 'badge-critical' : 'badge-low'}">Risk: ${json.risk}</span>
                 </div>
                 <div style="margin-top:0.5rem; font-size:1.1rem; color:${statusColor}; font-weight:bold;">
                     ${statusIcon} ${statusText}
                 </div>
-                <div style="margin-top:0.5rem; font-size:0.85rem; color:var(--text-secondary);">
-                    Status: ${json.status}
-                </div>
+                ${extraDetails}
             `;
         }
     } catch (e) {
