@@ -145,6 +145,21 @@ Example JSON:
                 Waiting for agent connections...
             </div>
             
+            <div id="fleet-controls" style="display: none; justify-content: space-between; align-items: center; margin-top: 1rem; background: rgba(0,0,0,0.2); padding: 0.75rem 1rem; border-radius: 4px; border: 1px solid var(--border-glass);">
+                <div style="font-size: 0.85rem; display: flex; gap: 1rem;">
+                    <div><span style="color:var(--text-secondary);">Total Score:</span> <strong id="fleet-health-score" style="color:var(--color-low);">100%</strong></div>
+                    <div><span style="color:var(--text-secondary);">Total Hosts:</span> <strong id="fleet-total-count">0</strong></div>
+                    <div><span style="color:var(--text-secondary);">Critical:</span> <strong id="fleet-critical-count" style="color:var(--color-critical);">0</strong></div>
+                </div>
+                <div>
+                    <select id="agent-sort-select" style="background: rgba(255,255,255,0.05); color: #fff; border: 1px solid var(--border-glass); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem;">
+                        <option value="risk">Sort by Risk</option>
+                        <option value="health">Sort by Health</option>
+                        <option value="name">Sort by Name</option>
+                    </select>
+                </div>
+            </div>
+
             <div id="telemetry-container" style="display: flex; flex-direction: column; gap: 1.5rem; margin-top: 1rem;">
                 <!-- Agents injected here -->
             </div>

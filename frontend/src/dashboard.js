@@ -307,12 +307,17 @@ function exportStorageReport() {
     URL.revokeObjectURL(url);
 }
 
-// Ensure history is rendered on load if drawer is ever open
+// ── NEW: Agent Telemetry Polling & Sorting State ──
+let currentFleetSort = 'risk';
+
 document.addEventListener('DOMContentLoaded', () => {
     // Initial prep
+    document.getElementById('agent-sort-select')?.addEventListener('change', (e) => {
+        currentFleetSort = e.target.value;
+        fetchAgentTelemetry(); // Force immediate re-render
+    });
 });
 
-// ── NEW: Agent Telemetry Polling ──
 async function fetchAgentTelemetry() {
     try {
         const res = await fetch(`${API_BASE}/api/agent-status`);
@@ -322,6 +327,8 @@ async function fetchAgentTelemetry() {
         const badge = document.getElementById('agent-status-badge');
         const container = document.getElementById('telemetry-container');
         const loading = document.getElementById('telemetry-loading');
+        const controls = document.getElementById('fleet-controls');
+        
         if(!badge || !container || !loading) return;
 
         if(!json.agents || json.agents.length === 0) {
@@ -330,26 +337,51 @@ async function fetchAgentTelemetry() {
             badge.style.color = 'var(--text-secondary)';
             container.innerHTML = '';
             loading.style.display = 'block';
+            if (controls) controls.style.display = 'none';
             
-            // Clear any fleet banners
             const existingBanner = document.getElementById('fleet-critical-banner');
             if (existingBanner) existingBanner.remove();
             return;
         }
 
-        const agents = json.agents;
+        let agents = json.agents;
         loading.style.display = 'none';
+        if (controls) controls.style.display = 'flex';
 
+        // Sorting Logic
+        agents.sort((a, b) => {
+            if (currentFleetSort === 'risk') {
+                return (b.risk_score || 0) - (a.risk_score || 0);
+            } else if (currentFleetSort === 'health') {
+                return (b.healthScore || 0) - (a.healthScore || 0);
+            } else if (currentFleetSort === 'name') {
+                return (a.hostname || 'z').localeCompare(b.hostname || 'z');
+            }
+            return 0;
+        });
+
+        // Fleet Summaries
         const onlineCount = agents.filter(a => a.connection_status === 'online').length;
+        const criticalCount = agents.filter(a => a.risk_level === 'Critical').length;
+        const avgHealth = agents.length ? Math.round(agents.reduce((acc, a) => acc + (a.healthScore || 100), 0) / agents.length) : 0;
+        
         badge.textContent = `${onlineCount}/${agents.length} Online`;
         badge.style.background = onlineCount > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)';
         badge.style.color = onlineCount > 0 ? 'var(--color-low)' : 'var(--color-medium)';
 
-        let fleetHasCritical = false;
+        document.getElementById('fleet-total-count').textContent = agents.length;
+        document.getElementById('fleet-critical-count').textContent = criticalCount;
+        
+        const healthScoreEl = document.getElementById('fleet-health-score');
+        if (healthScoreEl) {
+            healthScoreEl.textContent = avgHealth + '%';
+            healthScoreEl.style.color = avgHealth < 50 ? 'var(--color-critical)' : avgHealth < 80 ? 'var(--color-medium)' : 'var(--color-low)';
+        }
 
+        let fleetHasCritical = criticalCount > 0;
+
+        // Render Cards
         container.innerHTML = agents.map(agent => {
-            if (agent.risk_level === 'Critical') fleetHasCritical = true;
-
             const riskColor = 
                 agent.risk_level === 'Critical' ? 'var(--color-critical)' : 
                 agent.risk_level === 'High' ? 'var(--color-high)' : 
@@ -365,6 +397,8 @@ async function fetchAgentTelemetry() {
                     `<li style="margin-bottom:0.2rem;"><code style="background:var(--bg-primary); padding:0.1rem 0.3rem;">${p.port}</code> <span style="color:var(--text-secondary)">${p.ip}</span></li>`
                 ).join('');
             }
+            
+            const breakdown = agent.risk_breakdown || {system:0, network:0, cve:0};
 
             return `
             <div style="border: 1px solid var(--border-glass); border-radius: 6px; overflow: hidden; background: rgba(255,255,255,0.02); margin-bottom: 1rem;">
@@ -386,8 +420,21 @@ async function fetchAgentTelemetry() {
                     </div>
                 </div>
                 
+                <!-- Expanded Risk Notice -->
+                ${agent.priorityFix && agent.priorityFix !== "No immediate action required." ? `
+                <div style="padding: 0.5rem 1rem; background: rgba(239, 68, 68, 0.1); border-bottom: 1px solid var(--border-glass); font-size: 0.85rem;">
+                    <strong style="color:var(--color-critical)">Priority Fix:</strong> ${escapeHtml(agent.priorityFix)}
+                </div>` : ''}
+
                 <!-- Card Body -->
                 <div style="padding: 1rem;">
+                
+                    <div style="display: flex; justify-content: space-around; margin-bottom: 1rem; background: rgba(0,0,0,0.15); padding: 0.5rem; border-radius: 4px; font-size: 0.8rem;">
+                        <div>System Risk: <strong style="color:${breakdown.system > 0 ? 'var(--color-high)' : 'var(--text-secondary)'}">${breakdown.system}</strong></div>
+                        <div>ExtNetwork Risk: <strong style="color:${breakdown.network > 0 ? 'var(--color-high)' : 'var(--text-secondary)'}">${breakdown.network}</strong></div>
+                        <div>CVE Risk: <strong style="color:${breakdown.cve > 0 ? 'var(--color-critical)' : 'var(--text-secondary)'}">${breakdown.cve}</strong></div>
+                    </div>
+
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
                         <div>
                             <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem; font-size: 0.85rem;">
@@ -451,7 +498,7 @@ async function fetchAgentTelemetry() {
                 banner.style.alignItems = 'center';
                 banner.style.gap = '0.5rem';
                 banner.innerHTML = `<strong>🚨 CRITICAL ALERT:</strong> One or more agents in your fleet are flagged as critical risk. Please execute immediate remediation.`;
-                telemetrySection.insertBefore(banner, container);
+                telemetrySection.insertBefore(banner, controls); // Insert above the controls
             }
         } else if (existingBanner) {
             existingBanner.remove();

@@ -90,7 +90,7 @@ def create_app():
 
     # ── NEW: Real-Time System Agent Endpoints ──
     AGENT_CACHE = {}
-    NONCE_CACHE = set()
+    NONCE_CACHE = {} # map nonce -> expiry_timestamp
 
     @app.route("/api/agent-scan", methods=["POST", "OPTIONS"])
     @limiter.exempt
@@ -102,17 +102,30 @@ def create_app():
         if request.content_length and request.content_length > 512 * 1024:
             return jsonify({"status": "error", "message": "Payload too large"}), 413
 
-        required_key = os.environ.get("AGENT_KEY", "default-agent-key-123")
-        provided_signature = request.headers.get("x-agent-signature")
+        # Security Key Rotation Logic
+        agent_keys_env = os.environ.get("AGENT_KEYS", "default-agent-key-123")
+        active_keys = [k.strip() for k in agent_keys_env.split(',')]
         
-        if not provided_signature:
-            return jsonify({"status": "error", "message": "Missing cryptographic signature"}), 403
+        provided_signature = request.headers.get("x-agent-signature")
+        ts = request.headers.get("x-agent-timestamp")
+        nonce = request.headers.get("x-agent-nonce")
+        
+        if not provided_signature or not ts or not nonce:
+            return jsonify({"status": "error", "message": "Missing EDR cryptographic headers"}), 403
 
         raw_data = request.get_data()
         
-        # Verify HMAC-SHA256 Signature
-        expected_signature = hmac.new(required_key.encode('utf-8'), raw_data, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(provided_signature, expected_signature):
+        # Verify Advanced Signature
+        target_str = f"POST\n{request.path}\n{ts}\n{nonce}\n{raw_data.decode('utf-8')}"
+        valid_signature = False
+        
+        for key in active_keys:
+            expected = hmac.new(key.encode('utf-8'), target_str.encode('utf-8'), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(provided_signature, expected):
+                valid_signature = True
+                break
+                
+        if not valid_signature:
             return jsonify({"status": "error", "message": "Invalid signature. Spoofing detected."}), 403
 
         try:
@@ -120,47 +133,54 @@ def create_app():
             if not isinstance(payload, dict):
                 return jsonify({"status": "error", "message": "Invalid JSON mapping"}), 400
             
-            # Anti-Replay: Nonce check
-            nonce = payload.get("nonce")
-            if not nonce or nonce in NONCE_CACHE:
-                return jsonify({"status": "error", "message": "Replay attack detected"}), 403
-            NONCE_CACHE.add(nonce)
-            # Basic cleanup of old nonces in memory (keeps last 10k)
-            if len(NONCE_CACHE) > 10000:
-                NONCE_CACHE.clear()
-
-            # Timestamp Drift validation (Max 60 seconds)
-            agent_timestamp = payload.get("timestamp", 0)
-            if abs(time.time() - agent_timestamp) > 60:
+            # Anti-Replay & Timestamp TTL
+            now = time.time()
+            if abs(now - float(ts)) > 60:
                 return jsonify({"status": "error", "message": "Payload timestamp expired"}), 403
 
-            # Validate agentId format (basic alphanumeric/hyphen)
+            if nonce in NONCE_CACHE and NONCE_CACHE[nonce] > now:
+                 return jsonify({"status": "error", "message": "Replay attack detected"}), 403
+            
+            NONCE_CACHE[nonce] = now + 120 # Cache nonce for 2 minutes
+            
+            # TTL Cleanup for NONCE_CACHE
+            if len(NONCE_CACHE) > 5000:
+                expired = [k for k,v in NONCE_CACHE.items() if v <= now]
+                for k in expired: del NONCE_CACHE[k]
+
             agent_id = str(payload.get("agentId", "unknown"))
             if not re.match(r"^[a-zA-Z0-9\-]{10,50}$", agent_id):
                 return jsonify({"status": "error", "message": "Invalid Agent ID format"}), 400
 
-            # Calculate Risk Score
+            # Granular Risk Orchestra
             load = payload.get("cpu_percent", 0)
             ports = payload.get("open_ports", [])
             cves = payload.get("cves", {"critical": 0, "high": 0})
             
-            risk_score = 0
-            if load > 90: risk_score += 10
-            elif load > 75: risk_score += 5
+            sys_risk = 10 if load > 90 else (5 if load > 75 else 0)
+            net_risk = min(50, len(ports) * 2)
+            cve_risk = (cves.get("critical", 0) * 20) + (cves.get("high", 0) * 10)
+            cve_risk = min(100, cve_risk)
             
-            risk_score += len(ports) * 2 
-            risk_score += cves.get("critical", 0) * 20
-            risk_score += cves.get("high", 0) * 10
-            
-            if risk_score > 100: risk_score = 100
+            risk_score = min(100, sys_risk + net_risk + cve_risk)
             
             if risk_score >= 80: risk_level = "Critical"
             elif risk_score >= 60: risk_level = "High"
             elif risk_score >= 40: risk_level = "Medium"
             else: risk_level = "Low"
 
+            priority_fix = "No immediate action required."
+            if cve_risk >= net_risk and cve_risk >= sys_risk and cve_risk > 0:
+                priority_fix = "Patch OS vulnerabilities detected by Trivy."
+            elif net_risk >= sys_risk and net_risk > 0:
+                priority_fix = f"Close {len(ports)} unauthorized listening ports."
+            elif sys_risk > 0:
+                priority_fix = "Investigate system CPU threshold limits."
+
             payload["risk_score"] = risk_score
             payload["risk_level"] = risk_level
+            payload["risk_breakdown"] = {"system": sys_risk, "network": net_risk, "cve": cve_risk}
+            payload["priorityFix"] = priority_fix
 
             # Store in global cache with timestamp
             AGENT_CACHE[agent_id] = {
