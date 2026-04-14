@@ -49,6 +49,13 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('attack-dashboard')?.classList.add('hidden');
     });
 
+    document.getElementById('btn-storage-panel')?.addEventListener('click', () => {
+        s3Panel.classList.remove('hidden');
+        pastePanel.classList.add('hidden');
+        telemetryPanel.classList.add('hidden');
+        document.getElementById('attack-dashboard')?.classList.add('hidden');
+    });
+
     // Start Telemetry Polling
     fetchAgentTelemetry();
     setInterval(fetchAgentTelemetry, 10000); // 10 seconds
