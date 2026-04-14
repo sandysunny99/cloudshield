@@ -5,7 +5,7 @@ import time
 import hmac
 import hashlib
 
-API_URL = "https://cloudshield-backend.onrender.com/api/agent-scan"
+API_URL = "https://cloudshield-tya3.onrender.com/api/agent-scan"
 AGENT_KEY = "default-agent-key-123"
 
 def sign_payload(method, path, ts, nonce, body_str, secret):
