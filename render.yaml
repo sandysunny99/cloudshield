@@ -4,7 +4,12 @@ services:
     env: python
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn "app:create_app()" -b 0.0.0.0:$PORT
+    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: AGENT_KEYS
+        value: default-agent-key-123
+      - key: ALLOWED_ORIGINS
+        value: https://cloudshield-vtah.vercel.app,http://localhost:5173
