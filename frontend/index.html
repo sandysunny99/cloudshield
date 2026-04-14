@@ -202,6 +202,17 @@ Example JSON:
                     <div style="color:var(--text-secondary); font-size: 0.85rem;">No active blocks.</div>
                 </div>
             </div>
+
+            <!-- SOC Event Stream -->
+            <div style="margin-top: 1.5rem; border: 1px solid var(--border-glass); border-radius: 4px; overflow: hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding: 0.6rem 1rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--border-glass);">
+                    <h3 style="margin:0; font-size: 0.95rem;">📡 SOC Event Stream</h3>
+                    <span style="font-size: 0.75rem; color: var(--text-secondary);">Real-time security event log</span>
+                </div>
+                <div id="soc-timeline-list" class="soc-timeline">
+                    <div class="soc-empty">No events recorded. System nominal.</div>
+                </div>
+            </div>
         </section>
 
         <!-- Alerts Section (NEW) -->
@@ -375,6 +386,7 @@ Example JSON:
         <p>CloudShield — DevSecOps Pipeline Dashboard • No AI/LLM • Deterministic Analysis</p>
     </footer>
 
+    <div id="toast-container" class="toast-container"></div>
     <script type="module" src="/src/dashboard.js"></script>
 </body>
 </html>

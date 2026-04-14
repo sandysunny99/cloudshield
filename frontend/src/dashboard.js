@@ -20,49 +20,116 @@ let sourceDoughnutChart = null;
 let streamBarChart = null;
 let trendChart = null;
 
+// ── SOC Event Timeline ──
+const SOC_EVENTS = [];
+
+function addSocEvent(level, message) {
+    const now = new Date();
+    SOC_EVENTS.unshift({
+        level,
+        message,
+        time: now.toISOString(),
+        display: now.toLocaleTimeString()
+    });
+    if (SOC_EVENTS.length > 50) SOC_EVENTS.pop();
+    renderSocTimeline();
+}
+
+function renderSocTimeline() {
+    const el = document.getElementById('soc-timeline-list');
+    if (!el) return;
+    if (SOC_EVENTS.length === 0) {
+        el.innerHTML = '<div class="soc-empty">No events recorded. System nominal.</div>';
+        return;
+    }
+    const colorMap = {
+        CRITICAL: 'var(--color-critical)',
+        WARNING: 'var(--color-medium)',
+        INFO: 'var(--color-low)'
+    };
+    el.innerHTML = SOC_EVENTS.slice(0, 30).map(ev => {
+        const color = colorMap[ev.level] || 'var(--text-secondary)';
+        return `<div class="soc-event">
+            <span class="soc-time">${ev.display}</span>
+            <span class="soc-level" style="color:${color}">[${ev.level}]</span>
+            <span class="soc-msg">${escapeHtml(ev.message)}</span>
+        </div>`;
+    }).join('');
+}
+
+// ── Toast Notifications ──
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const icons = { info: 'ℹ️', success: '✅', error: '🚨', warning: '⚠️' };
+    toast.innerHTML = `
+        <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
+        <span class="toast-msg">${escapeHtml(message)}</span>
+        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+    `;
+    container.appendChild(toast);
+
+    // Animate in
+    requestAnimationFrame(() => toast.classList.add('toast-visible'));
+
+    // Auto-dismiss after 4s
+    setTimeout(() => {
+        toast.classList.remove('toast-visible');
+        setTimeout(() => { if (toast.parentElement) toast.remove(); }, 400);
+    }, 4000);
+}
+
 // ── Initialize ──
 document.addEventListener('DOMContentLoaded', () => {
     loadCachedResults();
-    
+
     // Panel navigation
     const pastePanel = document.getElementById('config-panel');
     const telemetryPanel = document.getElementById('telemetry-panel');
     const s3Panel = document.getElementById('s3-check-panel');
-    
-    document.getElementById('btn-paste-panel')?.addEventListener('click', () => {
-        pastePanel.classList.remove('hidden');
-        telemetryPanel.classList.add('hidden');
-        s3Panel.classList.add('hidden');
-    });
-    
-    document.getElementById('btn-telemetry-panel')?.addEventListener('click', () => {
-        telemetryPanel.classList.remove('hidden');
-        pastePanel.classList.add('hidden');
-        s3Panel.classList.add('hidden');
-        document.getElementById('attack-dashboard')?.classList.remove('hidden');
-    });
+    const attackPanel = document.getElementById('attack-dashboard');
 
     document.getElementById('btn-paste-panel')?.addEventListener('click', () => {
         pastePanel.classList.remove('hidden');
         telemetryPanel.classList.add('hidden');
         s3Panel.classList.add('hidden');
-        document.getElementById('attack-dashboard')?.classList.add('hidden');
+        attackPanel?.classList.add('hidden');
+    });
+
+    document.getElementById('btn-telemetry-panel')?.addEventListener('click', () => {
+        telemetryPanel.classList.remove('hidden');
+        attackPanel?.classList.remove('hidden');
+        pastePanel.classList.add('hidden');
+        s3Panel.classList.add('hidden');
     });
 
     document.getElementById('btn-storage-panel')?.addEventListener('click', () => {
         s3Panel.classList.remove('hidden');
         pastePanel.classList.add('hidden');
         telemetryPanel.classList.add('hidden');
-        document.getElementById('attack-dashboard')?.classList.add('hidden');
+        attackPanel?.classList.add('hidden');
     });
 
-    // Start Telemetry Polling
-    fetchAgentTelemetry();
-    setInterval(fetchAgentTelemetry, 10000); // 10 seconds
+    // Sort select listener
+    document.getElementById('agent-sort-select')?.addEventListener('change', (e) => {
+        currentFleetSort = e.target.value;
+        fetchAgentTelemetry();
+    });
 
-    // Start Security Metrics Polling
+    // Start Telemetry Polling — guard with document.hidden
+    fetchAgentTelemetry();
+    setInterval(() => { if (!document.hidden) fetchAgentTelemetry(); }, 10000);
+
+    // Start Security Metrics Polling — guard with document.hidden
     fetchSecurityMetrics();
-    setInterval(fetchSecurityMetrics, 10000);
+    setInterval(() => { if (!document.hidden) fetchSecurityMetrics(); }, 10000);
+
+    // Initialise SOC timeline display
+    renderSocTimeline();
+    addSocEvent('INFO', 'CloudShield Dashboard initialized. Monitoring active.');
 });
 
 // ── API Calls ──
@@ -78,16 +145,32 @@ async function runScan() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({})
         });
+
+        if (!res.ok) throw new Error(`Backend returned HTTP ${res.status}`);
+
         const json = await res.json();
+
+        if (json.status === 'error') {
+            throw new Error(json.message || 'Scan returned an error');
+        }
+
         if (json.data) {
             renderResults(json.data);
             showPipelineDone();
+            showToast('Scan completed successfully', 'success');
+            addSocEvent('INFO', 'Full pipeline scan completed successfully.');
+        } else {
+            showToast('Scan returned no data — backend may still be warming up', 'warning');
+            addSocEvent('WARNING', 'Scan returned empty data payload.');
         }
     } catch (e) {
         addLog('Scan failed: ' + e.message, 'error');
         showPipelineError();
+        showToast('Scan failed: ' + e.message, 'error');
+        addSocEvent('WARNING', `Pipeline scan error: ${e.message}`);
+    } finally {
+        setButtonsDisabled(false);
     }
-    setButtonsDisabled(false);
 }
 
 async function runDemo() {
@@ -101,31 +184,47 @@ async function runDemo() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
+
+        if (!res.ok) throw new Error(`Backend returned HTTP ${res.status}`);
+
         const json = await res.json();
+
+        if (json.status === 'error') {
+            throw new Error(json.message || 'Demo failed');
+        }
+
         if (json.data) {
             renderResults(json.data.before);
             renderComparison(json.data.before, json.data.after);
             showPipelineDone();
+            showToast('Demo complete — Before/After comparison loaded', 'success');
+            addSocEvent('INFO', 'Demo scan complete. Before/After comparison rendered.');
+        } else {
+            showToast('Demo returned no data', 'warning');
         }
     } catch (e) {
         addLog('Demo failed: ' + e.message, 'error');
         showPipelineError();
+        showToast('Demo failed: ' + e.message, 'error');
+        addSocEvent('WARNING', `Demo error: ${e.message}`);
+    } finally {
+        setButtonsDisabled(false);
     }
-    setButtonsDisabled(false);
 }
 
 async function loadCachedResults() {
     try {
         const res = await fetch(`${API_BASE}/api/results`);
+        if (!res.ok) return;
         const json = await res.json();
         if (json.status === 'cached' && json.data) {
             renderResults(json.data);
             addLog('Loaded cached results', 'info');
         }
-    } catch (e) { /* no cache, ok */ }
+    } catch (e) { /* no cache yet — silently ignore */ }
 }
 
-// ── NEW: Paste & Scan Raw Config ──
+// ── Paste & Scan Raw Config ──
 function toggleConfigPanel() {
     const panel = document.getElementById('config-panel');
     const s3Panel = document.getElementById('s3-check-panel');
@@ -200,6 +299,7 @@ async function scanRawConfig() {
     if (!configText) {
         statusEl.textContent = '❌ Please paste a configuration first';
         statusEl.className = 'config-status error';
+        showToast('Paste a configuration before analyzing', 'warning');
         return;
     }
 
@@ -216,39 +316,45 @@ async function scanRawConfig() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ config_text: configText, config_type: configType })
         });
+
+        if (!res.ok) throw new Error(`Backend returned HTTP ${res.status}`);
+
         const json = await res.json();
 
         if (json.status === 'error') {
             statusEl.textContent = `❌ ${json.message}`;
             statusEl.className = 'config-status error';
             addLog(`Error: ${json.message}`, 'error');
+            showToast(json.message, 'error');
             if (json.alerts) {
                 renderAlerts(json.alerts, { total: json.alerts.length, critical: 0, high: 1, medium: 0, low: 0 });
             }
             showPipelineError();
+            addSocEvent('WARNING', `Config scan error: ${json.message}`);
         } else if (json.data) {
             const alertCount = json.data.alert_summary?.total || 0;
             statusEl.textContent = `✅ Analysis complete — ${alertCount} issues found`;
             statusEl.className = 'config-status success';
             renderResults(json.data);
-            if (json.data.alerts) {
-                renderAlerts(json.data.alerts, json.data.alert_summary);
-            }
-            if (json.data.remediations) {
-                renderRemediations(json.data.remediations);
-            }
+            if (json.data.alerts) renderAlerts(json.data.alerts, json.data.alert_summary);
+            if (json.data.remediations) renderRemediations(json.data.remediations);
             showPipelineDone();
+            showToast(`Config analyzed: ${alertCount} issues found`, alertCount > 0 ? 'warning' : 'success');
+            addSocEvent(alertCount > 0 ? 'WARNING' : 'INFO', `Config scan complete: ${alertCount} issues found.`);
         }
     } catch (e) {
         statusEl.textContent = `❌ Connection failed: ${e.message}`;
         statusEl.className = 'config-status error';
         addLog('Config scan failed: ' + e.message, 'error');
         showPipelineError();
+        showToast('Backend unavailable: ' + e.message, 'error');
+        addSocEvent('CRITICAL', `Backend unreachable during config scan: ${e.message}`);
+    } finally {
+        setButtonsDisabled(false);
     }
-    setButtonsDisabled(false);
 }
 
-// ── NEW: Elite CSPM History Functions ──
+// ── Storage Scan History ──
 function getScanHistory() {
     try {
         return JSON.parse(localStorage.getItem('cloudshield_s3_history') || '[]');
@@ -259,12 +365,8 @@ function getScanHistory() {
 
 function saveToHistory(scanData) {
     let history = getScanHistory();
-    // Prepend to start of array
     history.unshift(scanData);
-    // Cap at 10 items
-    if (history.length > 10) {
-        history = history.slice(0, 10);
-    }
+    if (history.length > 10) history = history.slice(0, 10);
     localStorage.setItem('cloudshield_s3_history', JSON.stringify(history));
     renderHistory();
 }
@@ -273,18 +375,18 @@ function renderHistory() {
     const list = document.getElementById('storage-history-list');
     if (!list) return;
     const history = getScanHistory();
-    
+
     if (history.length === 0) {
         list.innerHTML = '<div style="color:var(--text-secondary)">No scan history available.</div>';
         const exportBtn = document.getElementById('btn-export-storage');
-        if(exportBtn) exportBtn.style.display = 'none';
+        if (exportBtn) exportBtn.style.display = 'none';
         return;
     }
 
     const exportBtn = document.getElementById('btn-export-storage');
-    if(exportBtn) exportBtn.style.display = 'inline-flex';
+    if (exportBtn) exportBtn.style.display = 'inline-flex';
 
-    list.innerHTML = history.map((item, idx) => {
+    list.innerHTML = history.map(item => {
         const isSafe = item.status === 'PASS';
         const icon = isSafe ? '✅' : '🚨';
         const color = isSafe ? 'var(--color-low)' : 'var(--color-critical)';
@@ -321,27 +423,27 @@ function exportStorageReport() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cloudshield-scans-${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `cloudshield-scans-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
 }
 
-// ── NEW: Security Metrics Fetching (Attack Dashboard) ──
-window.fetchSecurityMetrics = async function() {
+// ── Security Metrics (Attack Dashboard) ──
+window.fetchSecurityMetrics = async function () {
     try {
         const res = await fetch(`${API_BASE}/api/security-metrics`);
         if (!res.ok) return;
         const json = await res.json();
         if (json.status !== 'success') return;
-        
+
         const metrics = json.metrics || {};
-        
+
         const blockedEl = document.getElementById('metric-blocked-ips');
         if (blockedEl) blockedEl.textContent = metrics.total_blocked || 0;
-        
+
         const attackEl = document.getElementById('metric-attack-ips');
         if (attackEl) attackEl.textContent = metrics.total_attack_ips || 0;
-        
+
         const listDiv = document.getElementById('blocked-ips-list');
         if (listDiv) {
             if (!metrics.blocked_ips || metrics.blocked_ips.length === 0) {
@@ -353,45 +455,57 @@ window.fetchSecurityMetrics = async function() {
                         <div style="color:var(--text-secondary)">Expires in: <strong style="color:var(--color-info);">${b.time_remaining_seconds}s</strong></div>
                     </div>
                 `).join('');
+
+                // Emit SOC events for newly blocked IPs
+                metrics.blocked_ips.forEach(b => {
+                    const evKey = `blocked-${b.ip}`;
+                    if (!sessionStorage.getItem(evKey)) {
+                        addSocEvent('CRITICAL', `IP ${b.ip} auto-blocked at Cloudflare Edge. Rule: ${b.rule_id || 'Pending'}`);
+                        sessionStorage.setItem(evKey, '1');
+                    }
+                });
             }
         }
-    } catch(err) {
-        console.error('Metrics fetch error:', err);
+
+        // Emit SOC events for new attack IPs
+        if (metrics.recent_attacks && metrics.recent_attacks.length > 0) {
+            metrics.recent_attacks.forEach(a => {
+                const evKey = `attack-${a.ip}-${a.attempts}`;
+                if (!sessionStorage.getItem(evKey) && a.attempts >= 3) {
+                    addSocEvent('WARNING', `Spoofing detected from ${a.ip} — ${a.attempts} bad auth attempts.`);
+                    sessionStorage.setItem(evKey, '1');
+                }
+            });
+        }
+
+    } catch (err) {
+        // Silent — metrics are auxiliary, never toast on routine poll failure
     }
 };
 
-// ── NEW: Agent Telemetry Polling & Sorting State ──
+// ── Agent Telemetry Polling ──
 let currentFleetSort = 'risk';
-
-document.addEventListener('DOMContentLoaded', () => {
-    // Initial prep
-    document.getElementById('agent-sort-select')?.addEventListener('change', (e) => {
-        currentFleetSort = e.target.value;
-        fetchAgentTelemetry(); // Force immediate re-render
-    });
-});
 
 async function fetchAgentTelemetry() {
     try {
         const res = await fetch(`${API_BASE}/api/agent-status`);
-        if(!res.ok) return;
+        if (!res.ok) return;
         const json = await res.json();
-        
+
         const badge = document.getElementById('agent-status-badge');
         const container = document.getElementById('telemetry-container');
         const loading = document.getElementById('telemetry-loading');
         const controls = document.getElementById('fleet-controls');
-        
-        if(!badge || !container || !loading) return;
 
-        if(!json.agents || json.agents.length === 0) {
-            badge.textContent = 'Offline';
-            badge.style.background = 'var(--bg-primary)';
-            badge.style.color = 'var(--text-secondary)';
+        if (!badge || !container || !loading) return;
+
+        if (!json.agents || json.agents.length === 0) {
+            badge.textContent = '🔴 Offline';
+            badge.style.background = 'rgba(239,68,68,0.1)';
+            badge.style.color = 'var(--color-critical)';
             container.innerHTML = '';
             loading.style.display = 'block';
             if (controls) controls.style.display = 'none';
-            
             const existingBanner = document.getElementById('fleet-critical-banner');
             if (existingBanner) existingBanner.remove();
             return;
@@ -401,57 +515,81 @@ async function fetchAgentTelemetry() {
         loading.style.display = 'none';
         if (controls) controls.style.display = 'flex';
 
-        // Sorting Logic
+        // Sorting
         agents.sort((a, b) => {
-            if (currentFleetSort === 'risk') {
-                return (b.risk_score || 0) - (a.risk_score || 0);
-            } else if (currentFleetSort === 'health') {
-                return (b.healthScore || 0) - (a.healthScore || 0);
-            } else if (currentFleetSort === 'name') {
-                return (a.hostname || 'z').localeCompare(b.hostname || 'z');
-            }
+            if (currentFleetSort === 'risk') return (b.risk_score || 0) - (a.risk_score || 0);
+            if (currentFleetSort === 'health') return (b.healthScore || 0) - (a.healthScore || 0);
+            if (currentFleetSort === 'name') return (a.hostname || 'z').localeCompare(b.hostname || 'z');
             return 0;
         });
 
-        // Fleet Summaries
+        // Fleet summaries
         const onlineCount = agents.filter(a => a.connection_status === 'online').length;
         const criticalCount = agents.filter(a => a.risk_level === 'Critical').length;
-        const avgHealth = agents.length ? Math.round(agents.reduce((acc, a) => acc + (a.healthScore || 100), 0) / agents.length) : 0;
-        
-        badge.textContent = `${onlineCount}/${agents.length} Online`;
-        badge.style.background = onlineCount > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)';
-        badge.style.color = onlineCount > 0 ? 'var(--color-low)' : 'var(--color-medium)';
+        const avgHealth = agents.length
+            ? Math.round(agents.reduce((acc, a) => acc + (a.healthScore || 100), 0) / agents.length)
+            : 0;
+
+        // ── 🟢/🔴 status badge based on 60s threshold ──
+        if (onlineCount > 0) {
+            badge.textContent = `🟢 ${onlineCount}/${agents.length} Online`;
+            badge.style.background = 'rgba(34,197,94,0.15)';
+            badge.style.color = 'var(--color-low)';
+        } else {
+            badge.textContent = `🔴 Offline`;
+            badge.style.background = 'rgba(239,68,68,0.1)';
+            badge.style.color = 'var(--color-critical)';
+        }
 
         document.getElementById('fleet-total-count').textContent = agents.length;
         document.getElementById('fleet-critical-count').textContent = criticalCount;
-        
+
         const healthScoreEl = document.getElementById('fleet-health-score');
         if (healthScoreEl) {
             healthScoreEl.textContent = avgHealth + '%';
-            healthScoreEl.style.color = avgHealth < 50 ? 'var(--color-critical)' : avgHealth < 80 ? 'var(--color-medium)' : 'var(--color-low)';
+            healthScoreEl.style.color = avgHealth < 50
+                ? 'var(--color-critical)'
+                : avgHealth < 80 ? 'var(--color-medium)' : 'var(--color-low)';
         }
 
-        let fleetHasCritical = criticalCount > 0;
-
-        // Render Cards
+        // Render agent cards
         container.innerHTML = agents.map(agent => {
-            const riskColor = 
-                agent.risk_level === 'Critical' ? 'var(--color-critical)' : 
-                agent.risk_level === 'High' ? 'var(--color-high)' : 
+            const riskColor =
+                agent.risk_level === 'Critical' ? 'var(--color-critical)' :
+                agent.risk_level === 'High' ? 'var(--color-high)' :
                 agent.risk_level === 'Medium' ? 'var(--color-medium)' : 'var(--color-low)';
 
             const cpu = agent.cpu_percent || 0;
             const ram = agent.ram_percent || 0;
-            const cves = agent.cves || {critical:0, high:0};
-            
+            const cves = agent.cves || { critical: 0, high: 0 };
+
+            // ── 🟢/🔴/🟡 per-agent status badge ──
+            const lastSeen = agent.last_seen_seconds_ago || 0;
+            let connBadge, connBg, connColor;
+            if (agent.connection_status === 'online' && lastSeen <= 60) {
+                connBadge = '🟢 Online';
+                connBg = 'rgba(34,197,94,0.15)';
+                connColor = 'var(--color-low)';
+            } else if (agent.connection_status === 'stale' || lastSeen > 60) {
+                connBadge = '🟡 Stale';
+                connBg = 'rgba(234,179,8,0.15)';
+                connColor = 'var(--color-medium)';
+            } else {
+                connBadge = '🔴 Offline';
+                connBg = 'rgba(239,68,68,0.1)';
+                connColor = 'var(--color-critical)';
+            }
+
             let portsHtml = '<li>No open ports detected.</li>';
             if (agent.open_ports && agent.open_ports.length > 0) {
-                portsHtml = agent.open_ports.map(p => 
+                portsHtml = agent.open_ports.map(p =>
                     `<li style="margin-bottom:0.2rem;"><code style="background:var(--bg-primary); padding:0.1rem 0.3rem;">${p.port}</code> <span style="color:var(--text-secondary)">${p.ip}</span></li>`
                 ).join('');
+            } else if (agent.open_ports && agent.open_ports.length === 0) {
+                portsHtml = '<li style="color:var(--color-low)">✅ No unauthorized ports detected.</li>';
             }
-            
-            const breakdown = agent.risk_breakdown || {system:0, network:0, cve:0};
+
+            const breakdown = agent.risk_breakdown || { system: 0, network: 0, cve: 0 };
 
             return `
             <div style="border: 1px solid var(--border-glass); border-radius: 6px; overflow: hidden; background: rgba(255,255,255,0.02); margin-bottom: 1rem;">
@@ -465,46 +603,44 @@ async function fetchAgentTelemetry() {
                         </div>
                     </div>
                     <div style="display: flex; gap: 1rem; align-items: center;">
-                        <span class="badge ${agent.connection_status === 'online' ? 'badge-low' : 'badge-medium'}">${agent.connection_status.toUpperCase()}</span>
+                        <span style="display:inline-flex; align-items:center; padding:0.25rem 0.65rem; border-radius:999px; font-size:0.8rem; font-weight:600; background:${connBg}; color:${connColor}; border: 1px solid ${connColor};">${connBadge}</span>
                         <div style="text-align: right;">
                             <div style="font-size: 1.1rem; font-weight: bold; color: ${riskColor};">${agent.risk_level} RISK</div>
                             <div style="font-size: 0.75rem; color: var(--text-secondary);">Score: ${agent.risk_score} | Health: ${agent.healthScore}%</div>
                         </div>
                     </div>
                 </div>
-                
-                <!-- Expanded Risk Notice -->
-                ${agent.priorityFix && agent.priorityFix !== "No immediate action required." ? `
+
+                <!-- Priority Fix Notice -->
+                ${agent.priorityFix && agent.priorityFix !== 'No immediate action required.' ? `
                 <div style="padding: 0.5rem 1rem; background: rgba(239, 68, 68, 0.1); border-bottom: 1px solid var(--border-glass); font-size: 0.85rem;">
-                    <strong style="color:var(--color-critical)">Priority Fix:</strong> ${escapeHtml(agent.priorityFix)}
+                    <strong style="color:var(--color-critical)">⚡ Priority Fix:</strong> ${escapeHtml(agent.priorityFix)}
                 </div>` : ''}
 
                 <!-- Card Body -->
                 <div style="padding: 1rem;">
-                
+
                     <div style="display: flex; justify-content: space-around; margin-bottom: 1rem; background: rgba(0,0,0,0.15); padding: 0.5rem; border-radius: 4px; font-size: 0.8rem;">
                         <div>System Risk: <strong style="color:${breakdown.system > 0 ? 'var(--color-high)' : 'var(--text-secondary)'}">${breakdown.system}</strong></div>
-                        <div>ExtNetwork Risk: <strong style="color:${breakdown.network > 0 ? 'var(--color-high)' : 'var(--text-secondary)'}">${breakdown.network}</strong></div>
+                        <div>Network Risk: <strong style="color:${breakdown.network > 0 ? 'var(--color-high)' : 'var(--text-secondary)'}">${breakdown.network}</strong></div>
                         <div>CVE Risk: <strong style="color:${breakdown.cve > 0 ? 'var(--color-critical)' : 'var(--text-secondary)'}">${breakdown.cve}</strong></div>
                     </div>
 
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
                         <div>
                             <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem; font-size: 0.85rem;">
-                                <span>CPU Usage</span>
-                                <span>${cpu}%</span>
+                                <span>CPU Usage</span><span>${cpu}%</span>
                             </div>
-                            <div class="progress-bar-bg" style="width: 100%; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
-                                <div style="width: ${cpu}%; height: 100%; background: var(--color-info); transition: width 0.3s ease;"></div>
+                            <div style="width: 100%; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
+                                <div style="width: ${cpu}%; height: 100%; background: ${cpu > 90 ? 'var(--color-critical)' : cpu > 70 ? 'var(--color-medium)' : 'var(--color-info)'}; transition: width 0.3s ease;"></div>
                             </div>
                         </div>
                         <div>
                             <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem; font-size: 0.85rem;">
-                                <span>RAM Usage</span>
-                                <span>${ram}%</span>
+                                <span>RAM Usage</span><span>${ram}%</span>
                             </div>
-                            <div class="progress-bar-bg" style="width: 100%; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
-                                <div style="width: ${ram}%; height: 100%; background: var(--color-medium); transition: width 0.3s ease;"></div>
+                            <div style="width: 100%; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
+                                <div style="width: ${ram}%; height: 100%; background: ${ram > 90 ? 'var(--color-critical)' : 'var(--color-medium)'}; transition: width 0.3s ease;"></div>
                             </div>
                         </div>
                     </div>
@@ -512,9 +648,7 @@ async function fetchAgentTelemetry() {
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                         <div style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 4px; max-height: 150px; overflow-y: auto;">
                             <h3 style="margin-top: 0; font-size: 0.9rem; color: var(--text-secondary);">Open Ports</h3>
-                            <ul style="list-style-type: none; padding: 0; margin: 0; font-size: 0.85rem;">
-                                ${portsHtml}
-                            </ul>
+                            <ul style="list-style-type: none; padding: 0; margin: 0; font-size: 0.85rem;">${portsHtml}</ul>
                         </div>
                         <div style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 4px;">
                             <h3 style="margin-top: 0; font-size: 0.9rem; color: var(--text-secondary);">Trivy CVE Density</h3>
@@ -524,46 +658,41 @@ async function fetchAgentTelemetry() {
                             </div>
                         </div>
                     </div>
-                    
+
                     <div style="margin-top: 1rem; text-align: right; font-size: 0.75rem; color: var(--text-secondary);">
-                        Last updated: ${agent.last_seen_seconds_ago}s ago
+                        Last updated: ${lastSeen}s ago
                     </div>
                 </div>
             </div>
             `;
         }).join('');
 
-        // Critical Banner Logic
+        // Critical fleet banner
         const telemetrySection = document.getElementById('telemetry-panel');
         let existingBanner = document.getElementById('fleet-critical-banner');
-        
-        if (fleetHasCritical) {
+
+        if (criticalCount > 0) {
             if (!existingBanner) {
                 const banner = document.createElement('div');
                 banner.id = 'fleet-critical-banner';
-                banner.style.padding = '0.75rem 1rem';
-                banner.style.background = 'rgba(239,68,68,0.2)';
-                banner.style.border = '1px solid var(--color-critical)';
-                banner.style.borderRadius = '6px';
-                banner.style.margin = '1rem 0';
-                banner.style.color = 'var(--color-critical)';
-                banner.style.display = 'flex';
-                banner.style.alignItems = 'center';
-                banner.style.gap = '0.5rem';
-                banner.innerHTML = `<strong>🚨 CRITICAL ALERT:</strong> One or more agents in your fleet are flagged as critical risk. Please execute immediate remediation.`;
-                telemetrySection.insertBefore(banner, controls); // Insert above the controls
+                banner.style.cssText = 'padding:0.75rem 1rem; background:rgba(239,68,68,0.2); border:1px solid var(--color-critical); border-radius:6px; margin:1rem 0; color:var(--color-critical); display:flex; align-items:center; gap:0.5rem;';
+                banner.innerHTML = `<strong>🚨 CRITICAL ALERT:</strong> ${criticalCount} agent(s) flagged as critical risk. Execute immediate remediation.`;
+                telemetrySection.insertBefore(banner, controls);
+                addSocEvent('CRITICAL', `Fleet alert: ${criticalCount} critical-risk agent(s) detected.`);
             }
         } else if (existingBanner) {
             existingBanner.remove();
         }
 
-    } catch(err) {
-        // silent
+    } catch (err) {
+        // Silent — poll failure should not spam the UI
     }
 }
 
+// ── Storage Check with Input Sanitization ──
 async function checkS3Bucket() {
-    const bucketName = document.getElementById('s3-bucket-name').value.trim();
+    const input = document.getElementById('s3-bucket-name');
+    const bucketName = input.value.trim().toLowerCase();
     const providerEle = document.querySelector('input[name="cloud-provider"]:checked');
     const provider = providerEle ? providerEle.value : 'aws';
     const resultDiv = document.getElementById('s3-check-result');
@@ -572,6 +701,18 @@ async function checkS3Bucket() {
     if (!bucketName) {
         resultDiv.style.display = 'block';
         resultDiv.innerHTML = '<span style="color:var(--color-critical)">❌ Please enter a resource name</span>';
+        showToast('Enter a resource name to check', 'warning');
+        return;
+    }
+
+    // ── Input Sanitization ──
+    const BUCKET_REGEX = /^[a-z0-9.\-_]{3,63}$/;
+    if (!BUCKET_REGEX.test(bucketName)) {
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<span style="color:var(--color-critical)">❌ Invalid resource name. Use only lowercase letters, numbers, hyphens, dots (3–63 chars).</span>';
+        showToast('Invalid resource name format — only a-z, 0-9, hyphens, dots allowed', 'error');
+        input.style.borderColor = 'var(--color-critical)';
+        setTimeout(() => { input.style.borderColor = ''; }, 3000);
         return;
     }
 
@@ -584,30 +725,32 @@ async function checkS3Bucket() {
         const res = await fetch(`${API_BASE}/api/check-storage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider: provider, resource: bucketName })
+            body: JSON.stringify({ provider, resource: bucketName })
         });
-        
+
+        if (!res.ok) throw new Error(`Backend returned HTTP ${res.status}`);
+
         const json = await res.json();
-        
+
         if (json.status === 'error') {
             resultDiv.innerHTML = `<span style="color:var(--color-critical)">❌ Error: ${escapeHtml(json.message)}</span>`;
+            showToast(json.message, 'error');
+            addSocEvent('WARNING', `Storage check error for ${bucketName}: ${json.message}`);
         } else {
             const isPublic = json.isPublic;
             const statusColor = isPublic ? 'var(--color-critical)' : 'var(--color-low)';
             const statusIcon = isPublic ? '🚨' : '✅';
             const statusText = isPublic ? 'PUBLICLY ACCESSIBLE' : 'SECURE (Private)';
-            const providerTag = `<span class="badge ${json.provider === 'aws' ? 'badge-medium' : json.provider === 'azure' ? 'badge-info' : 'badge-high'}" style="margin-right:0.5rem">${json.provider.toUpperCase()}</span>`;
-            
+            const providerTag = `<span class="badge badge-medium" style="margin-right:0.5rem">${json.provider.toUpperCase()}</span>`;
+
             let extraDetails = '';
             if (isPublic && json.remediation && json.remediation !== 'No action required.') {
                 extraDetails = `
                     <div style="margin-top:0.75rem; padding-top:0.75rem; border-top:1px solid var(--border-glass);">
                         <div style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:0.25rem;">Exposure Type</div>
                         <div style="margin-bottom:0.75rem;"><strong>${escapeHtml(json.exposureType)}</strong></div>
-                        
                         <div style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:0.25rem;">Details</div>
                         <div style="margin-bottom:0.75rem;">${escapeHtml(json.details)}</div>
-                        
                         <div style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:0.25rem;">Remediation Command</div>
                         <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3); padding:0.5rem; border-radius:4px; font-family:monospace; font-size:0.85rem;">
                             <code>${escapeHtml(json.remediation)}</code>
@@ -625,30 +768,31 @@ async function checkS3Bucket() {
                         <span class="badge ${json.risk === 'Critical' ? 'badge-critical' : json.risk === 'Medium' ? 'badge-medium' : 'badge-low'}">Risk: ${json.risk} (Conf: ${json.confidence}%)</span>
                     </div>
                 </div>
-                <div style="margin-top:0.5rem; font-size:1.1rem; color:${statusColor}; font-weight:bold; display:flex; justify-content:space-between; align-items:center;">
-                    <span>${statusIcon} ${statusText}</span>
-                    <button class="btn btn-sm btn-outline" onclick="alert('Insight AI logic triggering...')"><span class="btn-icon">💡</span> Explain Risk</button>
+                <div style="margin-top:0.5rem; font-size:1.1rem; color:${statusColor}; font-weight:bold;">
+                    ${statusIcon} ${statusText}
                 </div>
                 ${extraDetails}
             `;
-            
-            // Save to localStorage history
+
             saveToHistory(json);
+            showToast(isPublic ? `⚠️ ${bucketName} is PUBLICLY exposed` : `✅ ${bucketName} is secure`, isPublic ? 'error' : 'success');
+            addSocEvent(isPublic ? 'CRITICAL' : 'INFO', `Storage check: ${bucketName} (${provider.toUpperCase()}) — ${isPublic ? 'PUBLICLY EXPOSED' : 'Secure'}`);
         }
     } catch (e) {
         resultDiv.innerHTML = `<span style="color:var(--color-critical)">❌ Connection failed: ${e.message}</span>`;
+        showToast('Storage check failed: ' + e.message, 'error');
+        addSocEvent('WARNING', `Storage check connection failed: ${e.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="btn-icon">☁️</span> Check Storage';
     }
-
-    btn.disabled = false;
-    btn.innerHTML = '<span class="btn-icon">☁️</span> Check Storage';
 }
 
-// ── NEW: Render Alerts ──
+// ── Render Alerts ──
 function renderAlerts(alerts, summary) {
     const section = document.getElementById('alerts-section');
     section.classList.remove('hidden');
 
-    // Summary bar
     const summaryEl = document.getElementById('alert-summary');
     summaryEl.innerHTML = `
         <div class="alert-stat critical"><span class="alert-count">${summary.critical || 0}</span> Critical</div>
@@ -658,9 +802,13 @@ function renderAlerts(alerts, summary) {
         <div class="alert-stat total"><span class="alert-count">${summary.total || 0}</span> Total</div>
     `;
 
-    // Alert cards
     const container = document.getElementById('alerts-container');
     container.innerHTML = '';
+
+    if (!alerts || alerts.length === 0) {
+        container.innerHTML = '<div style="text-align:center; color:var(--text-secondary); padding:2rem;">✅ No alerts detected.</div>';
+        return;
+    }
 
     alerts.forEach(alert => {
         const card = document.createElement('div');
@@ -681,13 +829,18 @@ function renderAlerts(alerts, summary) {
     });
 }
 
-// ── NEW: Render Remediations ──
+// ── Render Remediations ──
 function renderRemediations(remediations) {
     const section = document.getElementById('remediation-section');
     section.classList.remove('hidden');
 
     const container = document.getElementById('remediation-container');
     container.innerHTML = '';
+
+    if (!remediations || remediations.length === 0) {
+        container.innerHTML = '<div style="text-align:center; color:var(--text-secondary); padding:2rem;">✅ No remediation actions required.</div>';
+        return;
+    }
 
     remediations.forEach(rem => {
         const card = document.createElement('div');
@@ -715,10 +868,12 @@ function renderRemediations(remediations) {
 }
 
 function copyCommand(btn) {
-    const code = btn.closest('.rem-command').querySelector('code').textContent;
-    navigator.clipboard.writeText(code).then(() => {
+    const codeEl = btn.closest('.rem-command')?.querySelector('code') || btn.closest('div')?.querySelector('code');
+    if (!codeEl) return;
+    navigator.clipboard.writeText(codeEl.textContent).then(() => {
+        const orig = btn.textContent;
         btn.textContent = '✅ Copied!';
-        setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000);
+        setTimeout(() => { btn.textContent = orig; }, 2000);
     });
 }
 
@@ -726,7 +881,6 @@ function copyCommand(btn) {
 function renderResults(data) {
     if (!data) return;
 
-    // Summary cards
     const findings = data.findings || [];
     const risk = data.risk || {};
     const vulns = findings.filter(f => f.source === 'trivy').length;
@@ -743,20 +897,18 @@ function renderResults(data) {
     catBadge.textContent = cat;
     catBadge.className = 'card-badge badge-' + cat.toLowerCase();
 
-    // Execution log
     const logs = data.execution_log || [];
     clearLog();
-    logs.forEach(l => addLog(l, l.includes('✓') ? 'success' : 'info'));
+    if (logs.length === 0) {
+        addLog('No execution log returned from backend.', 'info');
+    } else {
+        logs.forEach(l => addLog(l, l.includes('✓') ? 'success' : 'info'));
+    }
 
-    // Charts
     renderSeverityChart(findings);
     renderSourceChart(findings);
     renderStreamChart(risk);
-
-    // Top 5 issues
     renderTopIssues(findings, data.remediations || []);
-
-    // Full findings table
     renderFindingsTable(findings, data.remediations || []);
 }
 
@@ -850,7 +1002,7 @@ function renderStreamChart(risk) {
     });
 }
 
-// ── Comparison (Demo) ──
+// ── Comparison (Demo Mode) ──
 function renderComparison(before, after) {
     const section = document.getElementById('comparison-section');
     section.classList.remove('hidden');
@@ -874,7 +1026,6 @@ function renderComparison(before, after) {
         : 0;
     document.getElementById('reduction-badge').textContent = `↓ ${reduction}% Risk Reduction`;
 
-    // Trend chart
     const ctx = document.getElementById('trend-chart').getContext('2d');
     if (trendChart) trendChart.destroy();
 
@@ -899,9 +1050,7 @@ function renderComparison(before, after) {
         },
         options: {
             responsive: true,
-            plugins: {
-                legend: { labels: { color: '#94a3b8' } }
-            },
+            plugins: { legend: { labels: { color: '#94a3b8' } } },
             scales: {
                 y: { beginAtZero: true, max: 4.5, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.05)' } },
                 x: { ticks: { color: '#94a3b8' }, grid: { display: false } }
@@ -910,7 +1059,7 @@ function renderComparison(before, after) {
     });
 }
 
-// ── Top 5 Issues ──
+// ── Top 5 Issues with Empty State ──
 function renderTopIssues(findings, remediations) {
     const remMap = {};
     remediations.forEach(r => { remMap[r.finding_id] = r; });
@@ -923,6 +1072,11 @@ function renderTopIssues(findings, remediations) {
     const top5 = sorted.slice(0, 5);
     const tbody = document.getElementById('top-issues-body');
     tbody.innerHTML = '';
+
+    if (top5.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--color-low); padding:1.5rem;">✅ No critical issues detected.</td></tr>';
+        return;
+    }
 
     top5.forEach((f, i) => {
         const rem = remMap[f.id] || {};
@@ -939,13 +1093,18 @@ function renderTopIssues(findings, remediations) {
     });
 }
 
-// ── Full Findings Table ──
+// ── Full Findings Table with Empty State ──
 function renderFindingsTable(findings, remediations) {
     const remMap = {};
     remediations.forEach(r => { remMap[r.finding_id] = r; });
 
     const tbody = document.getElementById('findings-body');
     tbody.innerHTML = '';
+
+    if (!findings || findings.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--color-low); padding:1.5rem;">✅ No findings available. System may be clean.</td></tr>';
+        return;
+    }
 
     findings.forEach(f => {
         const rem = remMap[f.id] || {};
@@ -971,6 +1130,7 @@ function renderFindingsTable(findings, remediations) {
 // ── UI Helpers ──
 function animateCounter(elementId, target) {
     const el = document.getElementById(elementId);
+    if (!el) return;
     let current = 0;
     const step = Math.max(1, Math.ceil(target / 20));
     const interval = setInterval(() => {
@@ -991,11 +1151,24 @@ function escapeHtml(str) {
 }
 
 function setButtonsDisabled(disabled) {
-    document.getElementById('btn-scan').disabled = disabled;
-    document.getElementById('btn-demo').disabled = disabled;
-    document.getElementById('btn-paste').disabled = disabled;
-    const analyzeBtn = document.getElementById('btn-analyze');
-    if (analyzeBtn) analyzeBtn.disabled = disabled;
+    // Lock scan & demo buttons
+    const ids = ['btn-scan', 'btn-demo', 'btn-analyze'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    });
+
+    // Update Run Scan button text to loading state
+    const scanBtn = document.getElementById('btn-scan');
+    if (scanBtn) {
+        scanBtn.innerHTML = disabled
+            ? '<span class="spinner"></span> Scanning...'
+            : '<span class="btn-icon">⚡</span> Run Scan';
+    }
+    const demoBtn = document.getElementById('btn-demo');
+    if (demoBtn && !disabled) {
+        demoBtn.innerHTML = '<span class="pulse-dot"></span> Live Scan';
+    }
 }
 
 function showPipelineRunning() {
@@ -1022,18 +1195,6 @@ function showPipelineError() {
     });
 }
 
-// ── Expose to global scope for inline onclick handlers ──
-window.runScan = runScan;
-window.runDemo = runDemo;
-window.toggleConfigPanel = toggleConfigPanel;
-window.clearConfigEditor = clearConfigEditor;
-window.loadSampleBadConfig = loadSampleBadConfig;
-window.scanRawConfig = scanRawConfig;
-window.copyCommand = copyCommand;
-window.checkS3Bucket = checkS3Bucket;
-window.toggleHistory = toggleHistory;
-window.exportStorageReport = exportStorageReport;
-
 // ── Log ──
 function clearLog() {
     document.getElementById('execution-log').innerHTML = '';
@@ -1050,3 +1211,16 @@ function addLog(message, type) {
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
 }
+
+// ── Global Exports ──
+window.runScan = runScan;
+window.runDemo = runDemo;
+window.toggleConfigPanel = toggleConfigPanel;
+window.clearConfigEditor = clearConfigEditor;
+window.loadSampleBadConfig = loadSampleBadConfig;
+window.scanRawConfig = scanRawConfig;
+window.copyCommand = copyCommand;
+window.checkS3Bucket = checkS3Bucket;
+window.toggleHistory = toggleHistory;
+window.exportStorageReport = exportStorageReport;
+window.fetchSecurityMetrics = fetchSecurityMetrics;

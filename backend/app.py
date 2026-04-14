@@ -47,15 +47,42 @@ SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "sample_data")
 
 def create_app():
     app = Flask(__name__)
-    
-    ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,https://cloudshield-vtah.vercel.app").split(",")
-    CORS(app, resources={r"/api/*": {"origins": ALLOWED_ORIGINS}})
-    
+
+    # ── CORS Hardening: explicit allow-list ──
+    _cors_default = "http://localhost:5173,https://cloudshield-vtah.vercel.app"
+    ALLOWED_ORIGINS = [
+        o.strip() for o in
+        os.environ.get("ALLOWED_ORIGINS", _cors_default).split(",")
+        if o.strip()
+    ]
+    CORS(
+        app,
+        resources={r"/api/*": {"origins": ALLOWED_ORIGINS}},
+        supports_credentials=False,
+        methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "x-agent-signature",
+                       "x-agent-timestamp", "x-agent-nonce"]
+    )
+
     def get_cf_ip():
-        # Extrapolate true client IP if behind Cloudflare
         return request.headers.get("CF-Connecting-IP", get_remote_address())
 
     limiter = Limiter(get_cf_ip, app=app, default_limits=["200 per day", "50 per hour"])
+
+    # ── SOC Event Timeline (in-memory, last 100 events) ──
+    SOC_TIMELINE = []
+
+    def add_soc_event(level: str, message: str):
+        """Thread-safe append to the SOC timeline."""
+        entry = {
+            "level": level,
+            "message": message,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+        SOC_TIMELINE.insert(0, entry)
+        if len(SOC_TIMELINE) > 100:
+            SOC_TIMELINE.pop()
+        print(f"[SOC-{level}] {message}")
 
     @app.before_request
     def log_request_info():
@@ -196,43 +223,56 @@ def create_app():
         FAILED_AUTH_TRACKER[ip] = record
         
         print(f"[SECURITY][FAILED_AUTH] IP={ip} Attempts={record['count']}/5")
-        
+        add_soc_event("WARNING", f"Bad auth attempt from {ip} — attempt {record['count']}/5")
+
         if record["count"] >= 5 and ip not in BLOCKED_IPS:
             print(f"[CRITICAL] Blocking IP {ip}")
-            # Placeholder until async finishes
             now = time.time()
             BLOCKED_IPS[ip] = {"rule_id": None, "banned_at": now, "expires_at": now + 3600}
+            add_soc_event("CRITICAL", f"IP {ip} auto-blocked for repeated spoofing (5 failed auth attempts).")
             block_ip_in_cloudflare(ip)
 
     @app.route("/api/security-metrics", methods=["GET"])
     def api_security_metrics():
-        active_blocks = []
-        now = time.time()
-        for ip, data in BLOCKED_IPS.items():
-            active_blocks.append({
-                "ip": ip,
-                "time_remaining_seconds": max(0, int(data["expires_at"] - now)),
-                "rule_id": data["rule_id"]
-            })
-            
-        attacks = []
-        for ip, tr in FAILED_AUTH_TRACKER.items():
-            if tr["count"] > 0:
-                attacks.append({
+        try:
+            active_blocks = []
+            now = time.time()
+            for ip, data in BLOCKED_IPS.items():
+                active_blocks.append({
                     "ip": ip,
-                    "attempts": tr["count"],
-                    "first_attempt": tr["first_attempt"]
+                    "time_remaining_seconds": max(0, int(data["expires_at"] - now)),
+                    "rule_id": data["rule_id"]
                 })
-        
-        return jsonify({
-            "status": "success",
-            "metrics": {
-                "total_blocked": len(active_blocks),
-                "total_attack_ips": len(attacks),
-                "blocked_ips": active_blocks,
-                "recent_attacks": attacks
-            }
-        })
+
+            attacks = []
+            for ip, tr in FAILED_AUTH_TRACKER.items():
+                if tr["count"] > 0:
+                    attacks.append({
+                        "ip": ip,
+                        "attempts": tr["count"],
+                        "first_attempt": tr["first_attempt"]
+                    })
+
+            return jsonify({
+                "status": "success",
+                "metrics": {
+                    "total_blocked": len(active_blocks),
+                    "total_attack_ips": len(attacks),
+                    "blocked_ips": active_blocks,
+                    "recent_attacks": attacks
+                }
+            })
+        except Exception as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 500
+
+    @app.route("/api/soc-timeline", methods=["GET"])
+    def api_soc_timeline():
+        """Return the last N SOC events (default 50)."""
+        try:
+            limit = min(int(request.args.get("limit", 50)), 100)
+            return jsonify({"status": "success", "events": SOC_TIMELINE[:limit]})
+        except Exception as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 500
 
     @app.route("/api/agent-scan", methods=["POST", "OPTIONS"])
     @limiter.limit("30 per minute")
@@ -377,43 +417,53 @@ def create_app():
 
     @app.route("/api/scan", methods=["POST"])
     def api_scan():
-        body = request.get_json(silent=True) or {}
-        image = body.get("image")
-        config = body.get("config")
-        trivy_output = body.get("trivy_output")
+        try:
+            body = request.get_json(silent=True) or {}
+            image = body.get("image")
+            config = body.get("config")
+            trivy_output = body.get("trivy_output")
 
-        if not config and not image and not trivy_output:
-            config = os.path.join(SAMPLE_DIR, "bad_aws_config.json")
-            trivy_output = os.path.join(SAMPLE_DIR, "sample_trivy_output.json")
+            if not config and not image and not trivy_output:
+                config = os.path.join(SAMPLE_DIR, "bad_aws_config.json")
+                trivy_output = os.path.join(SAMPLE_DIR, "sample_trivy_output.json")
 
-        result = run_pipeline(image=image, config=config, trivy_output=trivy_output)
-        _save_cache(result)
-        return jsonify({"status": "completed", "data": result})
+            result = run_pipeline(image=image, config=config, trivy_output=trivy_output)
+            _save_cache(result)
+            add_soc_event("INFO", "Full pipeline scan completed via /api/scan.")
+            return jsonify({"status": "completed", "data": result})
+        except Exception as exc:
+            add_soc_event("WARNING", f"/api/scan server error: {str(exc)}")
+            return jsonify({"status": "error", "message": "Internal scan error. Check server logs."}), 500
 
     @app.route("/api/demo", methods=["POST"])
     def api_demo():
-        bad_config = os.path.join(SAMPLE_DIR, "bad_aws_config.json")
-        good_config = os.path.join(SAMPLE_DIR, "good_aws_config.json")
-        trivy_file = os.path.join(SAMPLE_DIR, "sample_trivy_output.json")
-
-        before = run_pipeline(config=bad_config, trivy_output=trivy_file)
-        after = run_pipeline(config=good_config)
-
-        demo_data = {
-            "before": before,
-            "after": after,
-            "timestamp": datetime.now().isoformat(),
-        }
-
         try:
-            os.makedirs(REPORTS_DIR, exist_ok=True)
-            with open(os.path.join(REPORTS_DIR, "demo_comparison.json"), "w") as f:
-                json.dump(demo_data, f, indent=2, default=str)
-        except Exception:
-            pass
+            bad_config = os.path.join(SAMPLE_DIR, "bad_aws_config.json")
+            good_config = os.path.join(SAMPLE_DIR, "good_aws_config.json")
+            trivy_file = os.path.join(SAMPLE_DIR, "sample_trivy_output.json")
 
-        _save_cache(before)
-        return jsonify({"status": "completed", "data": demo_data})
+            before = run_pipeline(config=bad_config, trivy_output=trivy_file)
+            after = run_pipeline(config=good_config)
+
+            demo_data = {
+                "before": before,
+                "after": after,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            try:
+                os.makedirs(REPORTS_DIR, exist_ok=True)
+                with open(os.path.join(REPORTS_DIR, "demo_comparison.json"), "w") as f:
+                    json.dump(demo_data, f, indent=2, default=str)
+            except Exception:
+                pass
+
+            _save_cache(before)
+            add_soc_event("INFO", "Demo pipeline (before/after) completed via /api/demo.")
+            return jsonify({"status": "completed", "data": demo_data})
+        except Exception as exc:
+            add_soc_event("WARNING", f"/api/demo server error: {str(exc)}")
+            return jsonify({"status": "error", "message": "Internal demo error. Check server logs."}), 500
 
     # ── NEW: Enterprise Storage Check Endpoint ──
     STORAGE_CACHE = {}
@@ -609,104 +659,108 @@ def create_app():
         Accept raw cloud configuration code (JSON or YAML),
         analyze for misconfigurations, compliance issues, and generate alerts + remediation.
         """
-        body = request.get_json(silent=True) or {}
-        raw_config = body.get("config_text", "")
-        config_type = body.get("config_type", "json")  # json or yaml
-
-        if not raw_config or not raw_config.strip():
-            return jsonify({"status": "error", "message": "No configuration text provided"}), 400
-
-        # Parse the raw config text
         try:
-            if config_type == "yaml":
-                config_data = yaml.safe_load(raw_config)
-            else:
-                config_data = json.loads(raw_config)
-        except (json.JSONDecodeError, yaml.YAMLError) as e:
-            return jsonify({
-                "status": "error",
-                "message": f"Failed to parse {config_type.upper()} configuration: {str(e)}",
-                "alerts": [{
-                    "severity": "HIGH",
-                    "type": "PARSE_ERROR",
-                    "title": f"Invalid {config_type.upper()} Syntax",
-                    "message": str(e),
-                    "remediation": f"Fix the {config_type.upper()} syntax error at the specified location."
-                }]
-            }), 400
+            body = request.get_json(silent=True) or {}
+            raw_config = body.get("config_text", "")
+            config_type = body.get("config_type", "json")  # json or yaml
 
-        if not isinstance(config_data, dict):
-            return jsonify({"status": "error", "message": "Configuration must be a JSON/YAML object (not array or scalar)"}), 400
+            if not raw_config or not raw_config.strip():
+                return jsonify({"status": "error", "message": "No configuration text provided"}), 400
 
-        log = []
-        ts = lambda: datetime.now().strftime("%H:%M:%S")
+            # Parse the raw config text
+            try:
+                if config_type == "yaml":
+                    config_data = yaml.safe_load(raw_config)
+                else:
+                    config_data = json.loads(raw_config)
+            except (json.JSONDecodeError, yaml.YAMLError) as e:
+                return jsonify({
+                    "status": "error",
+                    "message": f"Failed to parse {config_type.upper()} configuration: {str(e)}",
+                    "alerts": [{
+                        "severity": "HIGH",
+                        "type": "PARSE_ERROR",
+                        "title": f"Invalid {config_type.upper()} Syntax",
+                        "message": str(e),
+                        "remediation": f"Fix the {config_type.upper()} syntax error at the specified location."
+                    }]
+                }), 400
 
-        log.append(f"[{ts()}] Received raw {config_type.upper()} configuration ({len(raw_config)} chars)")
+            if not isinstance(config_data, dict):
+                return jsonify({"status": "error", "message": "Configuration must be a JSON/YAML object (not array or scalar)"}), 400
 
-        # Step 1: Policy evaluation using Python engine
-        log.append(f"[{ts()}] Policy Engine — evaluating raw config...")
-        policy_findings = evaluate_with_python(config_data)
-        pol_crit = sum(1 for f in policy_findings if f.get("severity") == "CRITICAL")
-        log.append(f"[{ts()}] ✓ Policy Engine — {len(policy_findings)} violations ({pol_crit} CRITICAL)")
+            log = []
+            ts = lambda: datetime.now().strftime("%H:%M:%S")
 
-        # Step 2: Correlate findings
-        log.append(f"[{ts()}] Correlation Engine — analyzing...")
-        all_findings = correlate([], policy_findings)
-        corr_count = sum(1 for f in all_findings if f.get("source") == "correlation")
-        log.append(f"[{ts()}] ✓ Correlation — {corr_count} cross-source findings")
+            log.append(f"[{ts()}] Received raw {config_type.upper()} configuration ({len(raw_config)} chars)")
 
-        # Step 3: Risk scoring
-        risk = compute_risk_scores(all_findings)
-        log.append(f"[{ts()}] ✓ Risk Scoring — Score: {risk['final_score']} ({risk['category']})")
+            log.append(f"[{ts()}] Policy Engine — evaluating raw config...")
+            policy_findings = evaluate_with_python(config_data)
+            pol_crit = sum(1 for f in policy_findings if f.get("severity") == "CRITICAL")
+            log.append(f"[{ts()}] ✓ Policy Engine — {len(policy_findings)} violations ({pol_crit} CRITICAL)")
 
-        # Step 4: Remediation
-        remediations = generate_remediations(all_findings)
-        log.append(f"[{ts()}] ✓ Remediation — {len(remediations)} fix actions generated")
+            log.append(f"[{ts()}] Correlation Engine — analyzing...")
+            all_findings = correlate([], policy_findings)
+            corr_count = sum(1 for f in all_findings if f.get("source") == "correlation")
+            log.append(f"[{ts()}] ✓ Correlation — {corr_count} cross-source findings")
 
-        # Step 5: Compliance mapping
-        enriched = map_compliance(all_findings)
-        comp_summary = get_compliance_summary(enriched)
-        log.append(f"[{ts()}] ✓ Compliance — Mapped to {comp_summary['frameworks_impacted']} frameworks")
+            risk = compute_risk_scores(all_findings)
+            log.append(f"[{ts()}] ✓ Risk Scoring — Score: {risk['final_score']} ({risk['category']})")
 
-        # Generate alerts
-        alerts = []
-        for f in enriched:
-            sev = f.get("severity", "LOW")
-            alert = {
-                "severity": sev,
-                "type": f.get("type", "UNKNOWN"),
-                "title": f.get("title", "Unknown Issue"),
-                "message": f.get("message", f.get("description", "")),
-                "id": f.get("id", ""),
-                "policy": f.get("policy", ""),
+            remediations = generate_remediations(all_findings)
+            log.append(f"[{ts()}] ✓ Remediation — {len(remediations)} fix actions generated")
+
+            enriched = map_compliance(all_findings)
+            comp_summary = get_compliance_summary(enriched)
+            log.append(f"[{ts()}] ✓ Compliance — Mapped to {comp_summary['frameworks_impacted']} frameworks")
+
+            alerts = []
+            for f in enriched:
+                sev = f.get("severity", "LOW")
+                alert = {
+                    "severity": sev,
+                    "type": f.get("type", "UNKNOWN"),
+                    "title": f.get("title", "Unknown Issue"),
+                    "message": f.get("message", f.get("description", "")),
+                    "id": f.get("id", ""),
+                    "policy": f.get("policy", ""),
+                }
+                if sev in ("CRITICAL", "HIGH"):
+                    alert["alert_level"] = "🚨 CRITICAL ALERT" if sev == "CRITICAL" else "⚠️ HIGH ALERT"
+                else:
+                    alert["alert_level"] = "ℹ️ INFO"
+                alerts.append(alert)
+
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "config_type": config_type,
+                "config_size": len(raw_config),
+                "findings": enriched,
+                "risk": risk,
+                "remediations": remediations,
+                "compliance": comp_summary,
+                "alerts": alerts,
+                "alert_summary": {
+                    "total": len(alerts),
+                    "critical": sum(1 for a in alerts if a["severity"] == "CRITICAL"),
+                    "high": sum(1 for a in alerts if a["severity"] == "HIGH"),
+                    "medium": sum(1 for a in alerts if a["severity"] == "MEDIUM"),
+                    "low": sum(1 for a in alerts if a["severity"] == "LOW"),
+                },
+                "execution_log": log,
             }
-            if sev in ("CRITICAL", "HIGH"):
-                alert["alert_level"] = "🚨 CRITICAL ALERT" if sev == "CRITICAL" else "⚠️ HIGH ALERT"
-            else:
-                alert["alert_level"] = "ℹ️ INFO"
-            alerts.append(alert)
 
-        result = {
-            "timestamp": datetime.now().isoformat(),
-            "config_type": config_type,
-            "config_size": len(raw_config),
-            "findings": enriched,
-            "risk": risk,
-            "remediations": remediations,
-            "compliance": comp_summary,
-            "alerts": alerts,
-            "alert_summary": {
-                "total": len(alerts),
-                "critical": sum(1 for a in alerts if a["severity"] == "CRITICAL"),
-                "high": sum(1 for a in alerts if a["severity"] == "HIGH"),
-                "medium": sum(1 for a in alerts if a["severity"] == "MEDIUM"),
-                "low": sum(1 for a in alerts if a["severity"] == "LOW"),
-            },
-            "execution_log": log,
-        }
+            _save_cache(result)
+            crit_count = result["alert_summary"]["critical"]
+            add_soc_event(
+                "WARNING" if crit_count > 0 else "INFO",
+                f"Config scan complete: {len(enriched)} findings, {crit_count} critical."
+            )
+            return jsonify({"status": "completed", "data": result})
 
-        _save_cache(result)
-        return jsonify({"status": "completed", "data": result})
+        except Exception as exc:
+            add_soc_event("WARNING", f"/api/scan-config error: {str(exc)}")
+            return jsonify({"status": "error", "message": "Internal config scan error."}), 500
 
     return app
 
