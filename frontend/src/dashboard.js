@@ -242,17 +242,19 @@ window.exportReport = async function() {
             fetch(`${API_BASE}/api/results`).then(r => r.json()),
             fetch(`${API_BASE}/api/soc-timeline?limit=50`).then(r => r.json()),
         ]);
-        const report = {
-            exported_at: new Date().toISOString(),
-            platform: 'CloudShield EDR/CSPM', version: '3.0',
-            agents:           ar.status === 'fulfilled' ? ar.value.agents          : [],
-            security_metrics: mr.status === 'fulfilled' ? mr.value.metrics         : {},
-            latest_scan:      rr.status === 'fulfilled' ? rr.value.data            : null,
-            soc_events:       sr.status === 'fulfilled' ? sr.value.events          : [],
-            scan_history:  getScanHistory().map(h => ({ timestamp:h.timestamp, risk:h.risk, findings_count:h.findingsCount })),
-            storage_scans: JSON.parse(localStorage.getItem('cloudshield_s3_history') || '[]'),
+        const agents = ar.status === 'fulfilled' ? ar.value.agents : [];
+        const metrics = mr.status === 'fulfilled' ? mr.value.metrics : {};
+        const events = sr.status === 'fulfilled' ? sr.value.events : [];
+        const history = getScanHistory().map(h => ({ timestamp:h.timestamp, risk:h.risk, findings_count:h.findingsCount }));
+
+        const safeData = {
+            agents: agents || [],
+            metrics: metrics || {},
+            events: events || [],
+            history: history || []
         };
-        const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+
+        const blob = new Blob([JSON.stringify(safeData, null, 2)], { type: 'application/json' });
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href     = url;
@@ -515,9 +517,12 @@ function exportStorageReport() {
 window.fetchSecurityMetrics = async function() {
     try {
         const res = await fetch(`${API_BASE}/api/security-metrics`);
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
-        if (json.status !== 'success') return;
+        if (!json || json.status !== 'success') {
+            showToast("❌ Failed to load data", "error");
+            return;
+        }
         const m = json.metrics || {};
         lastMetricsData = m;
 
@@ -563,15 +568,21 @@ window.fetchSecurityMetrics = async function() {
         });
 
         updateStatusBar();
-    } catch { /* silent poll error */ }
+    } catch (e) {
+        showToast("❌ Something went wrong", "error");
+    }
 };
 
 // ── Agent Telemetry ──
 async function fetchAgentTelemetry() {
     try {
         const res = await fetch(`${API_BASE}/api/agent-status`);
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
+        if (!json || json.status !== 'success') {
+            showToast("❌ Failed to load data", "error");
+            return;
+        }
 
         const badge     = document.getElementById('agent-status-badge');
         const container = document.getElementById('telemetry-container');
@@ -703,7 +714,9 @@ async function fetchAgentTelemetry() {
         }
 
         updateStatusBar();
-    } catch { /* silent */ }
+    } catch (e) {
+        showToast("❌ Something went wrong", "error");
+    }
 }
 
 // ── Storage Check ──
@@ -870,9 +883,17 @@ function renderResults(data) {
 
 // ── Charts ──
 function renderSeverityChart(findings) {
+    const parent = document.getElementById('severity-bar-chart')?.parentElement;
+    if (!findings || findings.length === 0) {
+        if (parent && !parent.innerText.includes('No data available')) {
+            parent.innerHTML = '<h3>Severity Distribution</h3><div style="color:var(--text-secondary);text-align:center;padding:2rem;">No data available</div>';
+        }
+        return;
+    }
     const counts = { CRITICAL:0, HIGH:0, MEDIUM:0, LOW:0 };
     findings.forEach(f => { if (f.severity in counts) counts[f.severity]++; });
-    const ctx = document.getElementById('severity-bar-chart').getContext('2d');
+    const ctx = document.getElementById('severity-bar-chart')?.getContext('2d');
+    if (!ctx) return;
     if (severityBarChart) severityBarChart.destroy();
     severityBarChart = new Chart(ctx, {
         type:'bar', data:{ labels:Object.keys(counts), datasets:[{ label:'Findings', data:Object.values(counts), backgroundColor:Object.keys(counts).map(k=>SEVERITY_COLORS[k]), borderRadius:6, borderSkipped:false }] },
@@ -880,9 +901,17 @@ function renderSeverityChart(findings) {
     });
 }
 function renderSourceChart(findings) {
+    const parent = document.getElementById('source-doughnut-chart')?.parentElement;
+    if (!findings || findings.length === 0) {
+        if (parent && !parent.innerText.includes('No data available')) {
+            parent.innerHTML = '<h3>Finding Sources</h3><div style="color:var(--text-secondary);text-align:center;padding:2rem;">No data available</div>';
+        }
+        return;
+    }
     const counts = { trivy:0, opa:0, correlation:0 };
     findings.forEach(f => { if (f.source in counts) counts[f.source]++; });
-    const ctx = document.getElementById('source-doughnut-chart').getContext('2d');
+    const ctx = document.getElementById('source-doughnut-chart')?.getContext('2d');
+    if (!ctx) return;
     if (sourceDoughnutChart) sourceDoughnutChart.destroy();
     sourceDoughnutChart = new Chart(ctx, {
         type:'doughnut', data:{ labels:['CVE (Trivy)','Policy (OPA)','Correlated'], datasets:[{ data:Object.values(counts), backgroundColor:Object.values(SOURCE_COLORS), borderWidth:0, hoverOffset:8 }] },

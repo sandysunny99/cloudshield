@@ -253,47 +253,48 @@ def create_app():
             for ip, data in BLOCKED_IPS.items():
                 active_blocks.append({
                     "ip": ip,
-                    "time_remaining_seconds": max(0, int(data["expires_at"] - now)),
-                    "rule_id": data["rule_id"]
+                    "time_remaining_seconds": max(0, int(data.get("expires_at", now) - now)),
+                    "rule_id": data.get("rule_id")
                 })
 
             attacks = []
             for ip, tr in FAILED_AUTH_TRACKER.items():
-                if tr["count"] > 0:
+                if tr.get("count", 0) > 0:
                     attacks.append({
                         "ip": ip,
-                        "attempts": tr["count"],
-                        "first_attempt": tr["first_attempt"]
+                        "attempts": tr.get("count", 0),
+                        "first_attempt": tr.get("first_attempt", now)
                     })
 
             # Compute current attack rate (rolling 60s window)
             ATTACK_TRACKER["rate_window"] = [
-                t for t in ATTACK_TRACKER["rate_window"] if now - t < 60
+                t for t in ATTACK_TRACKER.get("rate_window", []) if now - t < 60
             ]
-            current_rate = len(ATTACK_TRACKER["rate_window"])
+            current_rate = len(ATTACK_TRACKER.get("rate_window", []))
 
             return jsonify({
                 "status": "success",
                 "metrics": {
-                    "total_blocked": len(active_blocks),
-                    "total_attack_ips": len(attacks),
-                    "attack_rate": current_rate,
-                    "peak_attack_rate": ATTACK_TRACKER["peak_rate"],
+                    "total_blocked": len(active_blocks) or 0,
+                    "total_attack_ips": len(attacks) or 0,
+                    "attack_rate": current_rate or 0,
+                    "peak_attack_rate": ATTACK_TRACKER.get("peak_rate", 0),
                     "blocked_ips": active_blocks,
                     "recent_attacks": attacks
                 }
             })
         except Exception as exc:
-            return jsonify({"status": "error", "message": str(exc)}), 500
+            return jsonify({"status": "error", "message": "Internal error"}), 500
 
     @app.route("/api/soc-timeline", methods=["GET"])
     def api_soc_timeline():
         """Return the last N SOC events (default 50)."""
         try:
             limit = min(int(request.args.get("limit", 50)), 100)
-            return jsonify({"status": "success", "events": SOC_TIMELINE[:limit]})
+            events = SOC_TIMELINE[:limit] if SOC_TIMELINE else []
+            return jsonify({"status": "success", "events": events})
         except Exception as exc:
-            return jsonify({"status": "error", "message": str(exc)}), 500
+            return jsonify({"status": "error", "message": "Internal error"}), 500
 
     @app.route("/api/agent-scan", methods=["POST", "OPTIONS"])
     @limiter.limit("30 per minute")
