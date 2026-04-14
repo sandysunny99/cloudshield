@@ -43,8 +43,21 @@ SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "sample_data")
 
 def create_app():
     app = Flask(__name__)
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    
+    ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,https://cloudshield-vtah.vercel.app").split(",")
+    CORS(app, resources={r"/api/*": {"origins": ALLOWED_ORIGINS}})
+    
     limiter = Limiter(get_remote_address, app=app, default_limits=["200 per day", "50 per hour"])
+
+    @app.before_request
+    def validate_api_key():
+        if request.endpoint == 'OPTIONS':
+            return
+        api_key = os.environ.get("CLOUDSHIELD_API_KEY")
+        if api_key and request.path.startswith("/api/"):
+            req_key = request.headers.get("X-API-Key")
+            if req_key != api_key:
+                return jsonify({"status": "error", "message": "Unauthorized"}), 403
 
     def _load_cache():
         if os.path.exists(CACHE_FILE):
@@ -120,10 +133,16 @@ def create_app():
     # ── NEW: Enterprise Storage Check Endpoint ──
     STORAGE_CACHE = {}
 
-    @app.route("/api/check-storage", methods=["POST"])
+    @app.route("/api/check-storage", methods=["POST", "OPTIONS"])
     @limiter.limit("10 per minute")
     @limiter.limit("100 per day")
     def api_check_storage():
+        start_time = time.perf_counter()
+        scanned_at = datetime.utcnow().isoformat() + "Z"
+        
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+
         try:
             body = request.get_json(silent=True)
             if body is None:
@@ -141,13 +160,18 @@ def create_app():
             if cache_key in STORAGE_CACHE:
                 cached_entry = STORAGE_CACHE[cache_key]
                 if time.time() - cached_entry['ts'] < 300: # 5 mins TTL
-                    return jsonify(cached_entry['data'])
+                    # Update dynamic time fields for cached entry
+                    c_data = cached_entry['data'].copy()
+                    c_data['scanDurationMs'] = round((time.perf_counter() - start_time) * 1000, 2)
+                    c_data['scannedAt'] = scanned_at
+                    return jsonify(c_data)
 
             is_public = False
             risk = "Low"
             exposure_type = "None"
             details = "Resource is securely configured and private."
             remediation = "No action required."
+            confidence = 100
 
             boto_config = Config(connect_timeout=3, read_timeout=3, retries={'max_attempts': 1})
 
@@ -192,8 +216,18 @@ def create_app():
                     policy_str = s3_client.get_bucket_policy(Bucket=resource_name).get('Policy', '{}')
                     policy = json.loads(policy_str)
                     for statement in policy.get('Statement', []):
-                        if statement.get('Effect') == 'Allow' and statement.get('Principal') == '*':
+                        if statement.get('Effect') == 'Allow' and statement.get('Principal') in ['*', {'AWS': '*'}]:
                             public_policy_found = True
+                            if statement.get('Condition'):
+                                risk = "Medium"
+                                exposure_type = "restricted_public"
+                                details = "Bucket Policy allows public access but enforces restrictions via conditions (e.g., IP Allowlist/VPC endpoints)."
+                                confidence = 85
+                            else:
+                                risk = "Critical"
+                                exposure_type = "Public Bucket Policy"
+                                details = "Bucket Policy contains a wildcard Principal (*) with an Allow effect."
+                                confidence = 95
                             break
                 except ClientError:
                     pass
@@ -206,9 +240,7 @@ def create_app():
                     remediation = f"aws s3api put-bucket-acl --bucket {resource_name} --acl private"
                 elif public_policy_found:
                     is_public = True
-                    risk = "Critical"
-                    exposure_type = "Public Bucket Policy"
-                    details = "Bucket Policy contains a wildcard Principal (*) with an Allow effect."
+                    # risk, exposure_type, details set above
                     remediation = f"aws s3api delete-bucket-policy --bucket {resource_name}"
 
             elif provider == "azure":
@@ -271,7 +303,10 @@ def create_app():
                 "risk": risk,
                 "exposureType": exposure_type,
                 "details": details,
-                "remediation": remediation
+                "remediation": remediation,
+                "confidence": confidence,
+                "scannedAt": scanned_at,
+                "scanDurationMs": round((time.perf_counter() - start_time) * 1000, 2)
             }
 
             # Cache the result

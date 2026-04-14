@@ -84,8 +84,17 @@ Example JSON:
 
         <!-- Multi-Cloud Storage Check Panel (NEW) -->
         <section id="s3-check-panel" class="section config-panel hidden" style="margin-top: 1rem;">
-            <h2 class="section-title">☁️ Multi-Cloud Storage Security Check</h2>
-            <p class="config-description">Enter a storage bucket/container name directly to verify if it is publicly accessible. Securely connects to AWS, Azure, or GCP via backend environment variables.</p>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                    <h2 class="section-title">☁️ Multi-Cloud Storage Security Check</h2>
+                    <p class="config-description">Enter a storage bucket/container name directly to verify if it is publicly accessible. Securely connects to AWS, Azure, or GCP via backend environment variables.</p>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-sm btn-accent" onclick="toggleHistory()"><span class="btn-icon">🕒</span> History</button>
+                    <button class="btn btn-sm btn-outline" id="btn-export-storage" onclick="exportStorageReport()" style="display:none;"><span class="btn-icon">💾</span> Export JSON</button>
+                </div>
+            </div>
+            
             <div style="margin-bottom: 1rem; display: flex; gap: 1.5rem;">
                 <label class="radio-label">
                     <input type="radio" name="cloud-provider" value="aws" checked> AWS S3
@@ -97,12 +106,23 @@ Example JSON:
                     <input type="radio" name="cloud-provider" value="gcp"> Google Cloud Storage
                 </label>
             </div>
+            
             <div class="s3-input-group" style="display: flex; gap: 1rem; align-items: center;">
                 <input type="text" id="s3-bucket-name" placeholder="my-test-bucket-name" style="padding: 0.8rem; border-radius: 4px; border: 1px solid var(--border-glass); background: var(--bg-primary); color: var(--text-primary); flex-grow: 1;">
                 <button id="btn-check-s3" class="btn btn-primary" onclick="checkS3Bucket()">
                     <span class="btn-icon">☁️</span> Check Storage
                 </button>
             </div>
+
+            <!-- History Drawer (Hidden by default) -->
+            <div id="storage-history-drawer" style="margin-top: 1rem; padding: 1rem; background: var(--bg-card); border: 1px solid var(--border-glass); border-radius: 4px; display: none;">
+                <h3 style="margin-top:0; font-size: 1rem; margin-bottom: 0.5rem;">Recent Scans</h3>
+                <div id="storage-history-list" style="font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.5rem; max-height: 150px; overflow-y: auto;">
+                    <div style="color:var(--text-secondary)">No scan history available.</div>
+                </div>
+            </div>
+            
+            <!-- Result Container -->
             <div id="s3-check-result" style="margin-top: 1rem; padding: 1rem; border-radius: 4px; background: rgba(0,0,0,0.2); display: none;"></div>
         </section>
 

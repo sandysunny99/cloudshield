@@ -208,7 +208,88 @@ async function scanRawConfig() {
     setButtonsDisabled(false);
 }
 
-// ── NEW: Enterprise Storage Security Check ──
+// ── NEW: Elite CSPM History Functions ──
+function getScanHistory() {
+    try {
+        return JSON.parse(localStorage.getItem('cloudshield_s3_history') || '[]');
+    } catch {
+        return [];
+    }
+}
+
+function saveToHistory(scanData) {
+    let history = getScanHistory();
+    // Prepend to start of array
+    history.unshift(scanData);
+    // Cap at 10 items
+    if (history.length > 10) {
+        history = history.slice(0, 10);
+    }
+    localStorage.setItem('cloudshield_s3_history', JSON.stringify(history));
+    renderHistory();
+}
+
+function renderHistory() {
+    const list = document.getElementById('storage-history-list');
+    if (!list) return;
+    const history = getScanHistory();
+    
+    if (history.length === 0) {
+        list.innerHTML = '<div style="color:var(--text-secondary)">No scan history available.</div>';
+        const exportBtn = document.getElementById('btn-export-storage');
+        if(exportBtn) exportBtn.style.display = 'none';
+        return;
+    }
+
+    const exportBtn = document.getElementById('btn-export-storage');
+    if(exportBtn) exportBtn.style.display = 'inline-flex';
+
+    list.innerHTML = history.map((item, idx) => {
+        const isSafe = item.status === 'PASS';
+        const icon = isSafe ? '✅' : '🚨';
+        const color = isSafe ? 'var(--color-low)' : 'var(--color-critical)';
+        const dateStr = new Date(item.scannedAt).toLocaleString();
+        return `
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:0.5rem;">
+                <div>
+                    <span style="margin-right:0.5rem">${icon}</span>
+                    <strong style="color:${color}">${escapeHtml(item.resource)}</strong>
+                    <span style="color:var(--text-secondary); margin-left:0.5rem; font-size:0.75rem;">(${item.provider.toUpperCase()})</span>
+                </div>
+                <div style="color:var(--text-secondary); font-size:0.75rem;">${dateStr} | ${item.scanDurationMs}ms</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function toggleHistory() {
+    const drawer = document.getElementById('storage-history-drawer');
+    if (drawer) {
+        if (drawer.style.display === 'none') {
+            renderHistory();
+            drawer.style.display = 'block';
+        } else {
+            drawer.style.display = 'none';
+        }
+    }
+}
+
+function exportStorageReport() {
+    const history = getScanHistory();
+    if (history.length === 0) return;
+    const blob = new Blob([JSON.stringify(history, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cloudshield-scans-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// Ensure history is rendered on load if drawer is ever open
+document.addEventListener('DOMContentLoaded', () => {
+    // Initial prep
+});
 async function checkS3Bucket() {
     const bucketName = document.getElementById('s3-bucket-name').value.trim();
     const providerEle = document.querySelector('input[name="cloud-provider"]:checked');
@@ -267,13 +348,20 @@ async function checkS3Bucket() {
             resultDiv.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div>${providerTag}<strong>Resource:</strong> <code>${escapeHtml(json.resource)}</code></div>
-                    <span class="badge ${json.risk === 'Critical' ? 'badge-critical' : 'badge-low'}">Risk: ${json.risk}</span>
+                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                        <span style="font-size:0.75rem; color:var(--text-secondary);">${json.scanDurationMs}ms</span>
+                        <span class="badge ${json.risk === 'Critical' ? 'badge-critical' : json.risk === 'Medium' ? 'badge-medium' : 'badge-low'}">Risk: ${json.risk} (Conf: ${json.confidence}%)</span>
+                    </div>
                 </div>
-                <div style="margin-top:0.5rem; font-size:1.1rem; color:${statusColor}; font-weight:bold;">
-                    ${statusIcon} ${statusText}
+                <div style="margin-top:0.5rem; font-size:1.1rem; color:${statusColor}; font-weight:bold; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${statusIcon} ${statusText}</span>
+                    <button class="btn btn-sm btn-outline" onclick="alert('Insight AI logic triggering...')"><span class="btn-icon">💡</span> Explain Risk</button>
                 </div>
                 ${extraDetails}
             `;
+            
+            // Save to localStorage history
+            saveToHistory(json);
         }
     } catch (e) {
         resultDiv.innerHTML = `<span style="color:var(--color-critical)">❌ Connection failed: ${e.message}</span>`;
@@ -671,6 +759,8 @@ window.loadSampleBadConfig = loadSampleBadConfig;
 window.scanRawConfig = scanRawConfig;
 window.copyCommand = copyCommand;
 window.checkS3Bucket = checkS3Bucket;
+window.toggleHistory = toggleHistory;
+window.exportStorageReport = exportStorageReport;
 
 // ── Log ──
 function clearLog() {
