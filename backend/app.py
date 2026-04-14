@@ -99,63 +99,73 @@ def create_app():
     NONCE_CACHE = {} # map nonce -> expiry_timestamp
     
     # Cloudflare Auto-Block Tracking
-    FAILED_AUTH_TRACKER = {}  # Format: { "ip": { "failures": 0, "blocked": False, "ts": time.time() } }
+    FAILED_AUTH_TRACKER = {}  # { ip: { "count": int, "first_attempt": timestamp } }
+    BLOCKED_IPS = set()       # Prevent duplicate blocks
+    
     CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
     CF_ZONE_ID = os.environ.get("CF_ZONE_ID")
     CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID")
+    SAFE_IPS = [ip.strip() for ip in os.environ.get("SAFE_IPS", "").split(",") if ip.strip()]
 
     def block_ip_in_cloudflare(ip):
-        if not CF_API_TOKEN or not CF_ACCOUNT_ID:
-            print(f"[SECURITY] Would block IP {ip} in Cloudflare, but CF_API_TOKEN/CF_ACCOUNT_ID is not set.")
+        if not CF_API_TOKEN or not CF_ZONE_ID:
+            print(f"[SECURITY][WARNING] Would block IP {ip} in Cloudflare, but CF_API_TOKEN/CF_ZONE_ID is not set.")
             return
 
         def _block_async():
-            print(f"[SECURITY] Initiating async Cloudflare block for IP: {ip}")
-            url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/rules/lists"
+            print(f"[CRITICAL] Initiating async Cloudflare block for IP: {ip}")
+            url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/firewall/access_rules/rules"
             
-            # Note: A real implementation requires updating an existing IP List or creating a Zone-level Firewall rule.
-            # Using Account-level IP list block logic for example:
             headers = {
                 "Authorization": f"Bearer {CF_API_TOKEN}",
                 "Content-Type": "application/json"
             }
-            # The actual API sequence depends on your WAF rule configuration.
-            # This structured log proves the security boundary was triggered.
-            print(f"[CF-API] POST request queued for {ip} with structured auto-block.")
+            
+            payload = {
+                "mode": "block",
+                "configuration": {
+                    "target": "ip",
+                    "value": ip
+                },
+                "notes": "Auto-blocked by CloudShield due to repeated spoofing attempts"
+            }
+            
             try:
-                # We mock the exact payload so you see how it translates to CF API
-                payload = {
-                    "mode": "block",
-                    "configuration": {"target": "ip", "value": ip},
-                    "notes": "Auto-blocked by CloudShield due to repeated spoofing attempts"
-                }
-                if CF_ZONE_ID:
-                    cf_url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/firewall/access_rules/rules"
-                    res = requests.post(cf_url, headers=headers, json=payload, timeout=5)
-                    print(f"[CF-API] Edge block applied: {res.status_code}")
+                res = requests.post(url, headers=headers, json=payload, timeout=5)
+                if res.status_code == 200:
+                    print(f"[SECURITY][SUCCESS] Edge block applied successfully for IP: {ip}")
+                else:
+                    print(f"[SECURITY][ERROR] Failed to block IP at Edge: {res.status_code} - {res.text}")
             except Exception as e:
-                print(f"[CF-API] Failed targeting Edge API: {str(e)}")
+                print(f"[SECURITY][ERROR] Failed targeting Edge API: {str(e)}")
 
         # Run async to not hang the flask thread
         threading.Thread(target=_block_async, daemon=True).start()
 
     def handle_failed_auth(ip):
-        now = time.time()
-        record = FAILED_AUTH_TRACKER.get(ip, {"failures": 0, "blocked": False, "ts": now})
-        
-        # Reset tracker if older than 1 hour
-        if now - record["ts"] > 3600:
-            record["failures"] = 0
-            record["blocked"] = False
+        if ip in SAFE_IPS:
+            print(f"[SECURITY][INFO] Failed auth from SAFE_IP: {ip}. Ignoring.")
+            return
             
-        record["failures"] += 1
-        record["ts"] = now
+        if ip in BLOCKED_IPS:
+            return  # Already blocked
+
+        now = time.time()
+        record = FAILED_AUTH_TRACKER.get(ip, {"count": 0, "first_attempt": now})
+        
+        # Reset counter after 5 minutes
+        if now - record["first_attempt"] > 300:
+            record["count"] = 0
+            record["first_attempt"] = now
+            
+        record["count"] += 1
         FAILED_AUTH_TRACKER[ip] = record
         
-        print(f"[SECURITY] Auth failure for {ip}. Attempts: {record['failures']}/5")
+        print(f"[SECURITY][FAILED_AUTH] IP={ip} Attempts={record['count']}/5")
         
-        if record["failures"] >= 5 and not record["blocked"]:
-            record["blocked"] = True
+        if record["count"] >= 5:
+            print(f"[CRITICAL] Blocking IP {ip}")
+            BLOCKED_IPS.add(ip)
             block_ip_in_cloudflare(ip)
 
     @app.route("/api/agent-scan", methods=["POST", "OPTIONS"])
