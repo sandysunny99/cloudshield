@@ -45,6 +45,7 @@ async function runScan() {
         }
     } catch (e) {
         addLog('Scan failed: ' + e.message, 'error');
+        showPipelineError();
     }
     setButtonsDisabled(false);
 }
@@ -68,6 +69,7 @@ async function runDemo() {
         }
     } catch (e) {
         addLog('Demo failed: ' + e.message, 'error');
+        showPipelineError();
     }
     setButtonsDisabled(false);
 }
@@ -81,6 +83,206 @@ async function loadCachedResults() {
             addLog('Loaded cached results', 'info');
         }
     } catch (e) { /* no cache, ok */ }
+}
+
+// ── NEW: Paste & Scan Raw Config ──
+function toggleConfigPanel() {
+    const panel = document.getElementById('config-panel');
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) {
+        document.getElementById('config-editor').focus();
+    }
+}
+
+function clearConfigEditor() {
+    document.getElementById('config-editor').value = '';
+    document.getElementById('config-status').textContent = '';
+}
+
+function loadSampleBadConfig() {
+    const sample = JSON.stringify({
+        "s3_buckets": [
+            {
+                "name": "public-data-bucket",
+                "acl": "public-read",
+                "public_access_block": {
+                    "block_public_acls": false,
+                    "block_public_policy": false
+                },
+                "encryption": { "enabled": false },
+                "logging": { "enabled": false }
+            },
+            {
+                "name": "logs-bucket",
+                "acl": "private",
+                "public_access_block": {
+                    "block_public_acls": true,
+                    "block_public_policy": true
+                },
+                "encryption": { "enabled": true, "algorithm": "AES256" },
+                "logging": { "enabled": false }
+            }
+        ],
+        "iam_roles": [
+            {
+                "name": "admin-role",
+                "mfa_required": false,
+                "policies": [
+                    { "name": "full-access", "action": "*", "resource": "*" },
+                    { "name": "s3-all", "action": "s3:*", "resource": "*" }
+                ]
+            }
+        ],
+        "cloudtrail": {
+            "enabled": false,
+            "multi_region": false,
+            "log_file_validation": false
+        },
+        "container_config": {
+            "privileged": true,
+            "run_as_root": true,
+            "read_only_rootfs": false
+        }
+    }, null, 2);
+
+    document.getElementById('config-editor').value = sample;
+    document.querySelector('input[name="config-type"][value="json"]').checked = true;
+    document.getElementById('config-status').textContent = '✅ Sample bad config loaded';
+}
+
+async function scanRawConfig() {
+    const configText = document.getElementById('config-editor').value.trim();
+    const configType = document.querySelector('input[name="config-type"]:checked').value;
+    const statusEl = document.getElementById('config-status');
+
+    if (!configText) {
+        statusEl.textContent = '❌ Please paste a configuration first';
+        statusEl.className = 'config-status error';
+        return;
+    }
+
+    statusEl.textContent = '⏳ Analyzing configuration...';
+    statusEl.className = 'config-status loading';
+    setButtonsDisabled(true);
+    showPipelineRunning();
+    clearLog();
+    addLog(`Scanning raw ${configType.toUpperCase()} configuration...`, 'info');
+
+    try {
+        const res = await fetch(`${API_BASE}/api/scan-config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config_text: configText, config_type: configType })
+        });
+        const json = await res.json();
+
+        if (json.status === 'error') {
+            statusEl.textContent = `❌ ${json.message}`;
+            statusEl.className = 'config-status error';
+            addLog(`Error: ${json.message}`, 'error');
+            if (json.alerts) {
+                renderAlerts(json.alerts, { total: json.alerts.length, critical: 0, high: 1, medium: 0, low: 0 });
+            }
+            showPipelineError();
+        } else if (json.data) {
+            const alertCount = json.data.alert_summary?.total || 0;
+            statusEl.textContent = `✅ Analysis complete — ${alertCount} issues found`;
+            statusEl.className = 'config-status success';
+            renderResults(json.data);
+            if (json.data.alerts) {
+                renderAlerts(json.data.alerts, json.data.alert_summary);
+            }
+            if (json.data.remediations) {
+                renderRemediations(json.data.remediations);
+            }
+            showPipelineDone();
+        }
+    } catch (e) {
+        statusEl.textContent = `❌ Connection failed: ${e.message}`;
+        statusEl.className = 'config-status error';
+        addLog('Config scan failed: ' + e.message, 'error');
+        showPipelineError();
+    }
+    setButtonsDisabled(false);
+}
+
+// ── NEW: Render Alerts ──
+function renderAlerts(alerts, summary) {
+    const section = document.getElementById('alerts-section');
+    section.classList.remove('hidden');
+
+    // Summary bar
+    const summaryEl = document.getElementById('alert-summary');
+    summaryEl.innerHTML = `
+        <div class="alert-stat critical"><span class="alert-count">${summary.critical || 0}</span> Critical</div>
+        <div class="alert-stat high"><span class="alert-count">${summary.high || 0}</span> High</div>
+        <div class="alert-stat medium"><span class="alert-count">${summary.medium || 0}</span> Medium</div>
+        <div class="alert-stat low"><span class="alert-count">${summary.low || 0}</span> Low</div>
+        <div class="alert-stat total"><span class="alert-count">${summary.total || 0}</span> Total</div>
+    `;
+
+    // Alert cards
+    const container = document.getElementById('alerts-container');
+    container.innerHTML = '';
+
+    alerts.forEach(alert => {
+        const card = document.createElement('div');
+        card.className = `alert-card alert-${(alert.severity || 'low').toLowerCase()}`;
+        card.innerHTML = `
+            <div class="alert-header">
+                <span class="alert-level">${alert.alert_level || 'ℹ️ INFO'}</span>
+                <span class="badge badge-${(alert.severity || 'low').toLowerCase()}">${alert.severity}</span>
+            </div>
+            <div class="alert-title">${escapeHtml(alert.title || 'Unknown')}</div>
+            <div class="alert-message">${escapeHtml(alert.message || '')}</div>
+            <div class="alert-meta">
+                <span>ID: <code>${alert.id || 'N/A'}</code></span>
+                <span>Type: ${alert.type || 'N/A'}</span>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+// ── NEW: Render Remediations ──
+function renderRemediations(remediations) {
+    const section = document.getElementById('remediation-section');
+    section.classList.remove('hidden');
+
+    const container = document.getElementById('remediation-container');
+    container.innerHTML = '';
+
+    remediations.forEach(rem => {
+        const card = document.createElement('div');
+        card.className = `remediation-card confidence-${rem.confidence || 'low'}`;
+        card.innerHTML = `
+            <div class="rem-header">
+                <span class="rem-title">🔧 ${escapeHtml(rem.title || 'Unknown Fix')}</span>
+                <span class="badge badge-confidence-${rem.confidence || 'low'}">${(rem.confidence || 'low').toUpperCase()} confidence</span>
+            </div>
+            <div class="rem-description">${escapeHtml(rem.description || '')}</div>
+            <div class="rem-command">
+                <div class="rem-command-header">
+                    <span>Fix Command:</span>
+                    <button class="btn btn-xs" onclick="copyCommand(this)">📋 Copy</button>
+                </div>
+                <pre><code>${escapeHtml(rem.command || '# No command available')}</code></pre>
+            </div>
+            <div class="rem-meta">
+                <span>Finding: <code>${rem.finding_id || 'N/A'}</code></span>
+                <span>Strategy: ${rem.strategy || 'N/A'}</span>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+function copyCommand(btn) {
+    const code = btn.closest('.rem-command').querySelector('code').textContent;
+    navigator.clipboard.writeText(code).then(() => {
+        btn.textContent = '✅ Copied!';
+        setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000);
+    });
 }
 
 // ── Render Results ──
@@ -354,11 +556,14 @@ function escapeHtml(str) {
 function setButtonsDisabled(disabled) {
     document.getElementById('btn-scan').disabled = disabled;
     document.getElementById('btn-demo').disabled = disabled;
+    document.getElementById('btn-paste').disabled = disabled;
+    const analyzeBtn = document.getElementById('btn-analyze');
+    if (analyzeBtn) analyzeBtn.disabled = disabled;
 }
 
 function showPipelineRunning() {
     document.querySelectorAll('.pipeline-step').forEach(el => {
-        el.classList.remove('done');
+        el.classList.remove('done', 'error');
         el.classList.add('active');
         el.querySelector('.step-status').innerHTML = '<span class="spinner"></span>';
     });
@@ -366,15 +571,28 @@ function showPipelineRunning() {
 
 function showPipelineDone() {
     document.querySelectorAll('.pipeline-step').forEach(el => {
-        el.classList.remove('active');
+        el.classList.remove('active', 'error');
         el.classList.add('done');
         el.querySelector('.step-status').textContent = '✓ Done';
+    });
+}
+
+function showPipelineError() {
+    document.querySelectorAll('.pipeline-step').forEach(el => {
+        el.classList.remove('active', 'done');
+        el.classList.add('error');
+        el.querySelector('.step-status').textContent = '✗ Error';
     });
 }
 
 // ── Expose to global scope for inline onclick handlers ──
 window.runScan = runScan;
 window.runDemo = runDemo;
+window.toggleConfigPanel = toggleConfigPanel;
+window.clearConfigEditor = clearConfigEditor;
+window.loadSampleBadConfig = loadSampleBadConfig;
+window.scanRawConfig = scanRawConfig;
+window.copyCommand = copyCommand;
 
 // ── Log ──
 function clearLog() {

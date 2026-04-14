@@ -1,12 +1,14 @@
 """
-CloudShield Flask Dashboard
-Lightweight visualization for demo purposes with result caching.
+CloudShield Flask API
+Backend API with CORS, rate limiting, and raw config scanning.
 """
 
 import json
 import os
 import sys
 import time
+import tempfile
+import yaml
 from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -14,7 +16,12 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 from main import run_pipeline, run_demo
-
+from policy_engine import evaluate_with_python
+from correlation import correlate
+from risk_engine import compute_risk_scores
+from remediation import generate_remediations
+from compliance import map_compliance, get_compliance_summary
+from scanner import parse_trivy_output, get_scan_summary
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "results_cache.json")
 CACHE_TTL = 300  # 5 minutes
@@ -22,12 +29,10 @@ REPORTS_DIR = os.path.join(os.path.dirname(__file__), "reports")
 SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "sample_data")
 
 
-
 def create_app():
     app = Flask(__name__)
-    CORS(app) # Enable CORS for Vercel
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
     limiter = Limiter(get_remote_address, app=app, default_limits=["200 per day", "50 per hour"])
-
 
     def _load_cache():
         if os.path.exists(CACHE_FILE):
@@ -42,10 +47,16 @@ def create_app():
         return None
 
     def _save_cache(data):
-        with open(CACHE_FILE, "w") as f:
-            json.dump({"cached_at": time.time(), "data": data}, f, indent=2, default=str)
+        try:
+            with open(CACHE_FILE, "w") as f:
+                json.dump({"cached_at": time.time(), "data": data}, f, indent=2, default=str)
+        except Exception:
+            pass  # Render's ephemeral FS may block writes
 
-    # Removed index route as frontend is on Vercel
+    # ── Health Check ──
+    @app.route("/")
+    def health():
+        return jsonify({"status": "ok", "service": "cloudshield-api", "timestamp": datetime.now().isoformat()})
 
     @app.route("/api/results")
     def api_results():
@@ -84,12 +95,121 @@ def create_app():
             "timestamp": datetime.now().isoformat(),
         }
 
-        os.makedirs(REPORTS_DIR, exist_ok=True)
-        with open(os.path.join(REPORTS_DIR, "demo_comparison.json"), "w") as f:
-            json.dump(demo_data, f, indent=2, default=str)
+        try:
+            os.makedirs(REPORTS_DIR, exist_ok=True)
+            with open(os.path.join(REPORTS_DIR, "demo_comparison.json"), "w") as f:
+                json.dump(demo_data, f, indent=2, default=str)
+        except Exception:
+            pass
 
         _save_cache(before)
         return jsonify({"status": "completed", "data": demo_data})
+
+    # ── NEW: Raw Config Scan Endpoint ──
+    @app.route("/api/scan-config", methods=["POST"])
+    def api_scan_config():
+        """
+        Accept raw cloud configuration code (JSON or YAML),
+        analyze for misconfigurations, compliance issues, and generate alerts + remediation.
+        """
+        body = request.get_json(silent=True) or {}
+        raw_config = body.get("config_text", "")
+        config_type = body.get("config_type", "json")  # json or yaml
+
+        if not raw_config or not raw_config.strip():
+            return jsonify({"status": "error", "message": "No configuration text provided"}), 400
+
+        # Parse the raw config text
+        try:
+            if config_type == "yaml":
+                config_data = yaml.safe_load(raw_config)
+            else:
+                config_data = json.loads(raw_config)
+        except (json.JSONDecodeError, yaml.YAMLError) as e:
+            return jsonify({
+                "status": "error",
+                "message": f"Failed to parse {config_type.upper()} configuration: {str(e)}",
+                "alerts": [{
+                    "severity": "HIGH",
+                    "type": "PARSE_ERROR",
+                    "title": f"Invalid {config_type.upper()} Syntax",
+                    "message": str(e),
+                    "remediation": f"Fix the {config_type.upper()} syntax error at the specified location."
+                }]
+            }), 400
+
+        if not isinstance(config_data, dict):
+            return jsonify({"status": "error", "message": "Configuration must be a JSON/YAML object (not array or scalar)"}), 400
+
+        log = []
+        ts = lambda: datetime.now().strftime("%H:%M:%S")
+
+        log.append(f"[{ts()}] Received raw {config_type.upper()} configuration ({len(raw_config)} chars)")
+
+        # Step 1: Policy evaluation using Python engine
+        log.append(f"[{ts()}] Policy Engine — evaluating raw config...")
+        policy_findings = evaluate_with_python(config_data)
+        pol_crit = sum(1 for f in policy_findings if f.get("severity") == "CRITICAL")
+        log.append(f"[{ts()}] ✓ Policy Engine — {len(policy_findings)} violations ({pol_crit} CRITICAL)")
+
+        # Step 2: Correlate findings
+        log.append(f"[{ts()}] Correlation Engine — analyzing...")
+        all_findings = correlate([], policy_findings)
+        corr_count = sum(1 for f in all_findings if f.get("source") == "correlation")
+        log.append(f"[{ts()}] ✓ Correlation — {corr_count} cross-source findings")
+
+        # Step 3: Risk scoring
+        risk = compute_risk_scores(all_findings)
+        log.append(f"[{ts()}] ✓ Risk Scoring — Score: {risk['final_score']} ({risk['category']})")
+
+        # Step 4: Remediation
+        remediations = generate_remediations(all_findings)
+        log.append(f"[{ts()}] ✓ Remediation — {len(remediations)} fix actions generated")
+
+        # Step 5: Compliance mapping
+        enriched = map_compliance(all_findings)
+        comp_summary = get_compliance_summary(enriched)
+        log.append(f"[{ts()}] ✓ Compliance — Mapped to {comp_summary['frameworks_impacted']} frameworks")
+
+        # Generate alerts
+        alerts = []
+        for f in enriched:
+            sev = f.get("severity", "LOW")
+            alert = {
+                "severity": sev,
+                "type": f.get("type", "UNKNOWN"),
+                "title": f.get("title", "Unknown Issue"),
+                "message": f.get("message", f.get("description", "")),
+                "id": f.get("id", ""),
+                "policy": f.get("policy", ""),
+            }
+            if sev in ("CRITICAL", "HIGH"):
+                alert["alert_level"] = "🚨 CRITICAL ALERT" if sev == "CRITICAL" else "⚠️ HIGH ALERT"
+            else:
+                alert["alert_level"] = "ℹ️ INFO"
+            alerts.append(alert)
+
+        result = {
+            "timestamp": datetime.now().isoformat(),
+            "config_type": config_type,
+            "config_size": len(raw_config),
+            "findings": enriched,
+            "risk": risk,
+            "remediations": remediations,
+            "compliance": comp_summary,
+            "alerts": alerts,
+            "alert_summary": {
+                "total": len(alerts),
+                "critical": sum(1 for a in alerts if a["severity"] == "CRITICAL"),
+                "high": sum(1 for a in alerts if a["severity"] == "HIGH"),
+                "medium": sum(1 for a in alerts if a["severity"] == "MEDIUM"),
+                "low": sum(1 for a in alerts if a["severity"] == "LOW"),
+            },
+            "execution_log": log,
+        }
+
+        _save_cache(result)
+        return jsonify({"status": "completed", "data": result})
 
     return app
 

@@ -26,11 +26,69 @@
                 <button id="btn-demo" class="btn btn-accent" onclick="runDemo()">
                     <span class="btn-icon">🔄</span> Demo Mode
                 </button>
+                <button id="btn-paste" class="btn btn-paste" onclick="toggleConfigPanel()">
+                    <span class="btn-icon">📋</span> Paste & Scan
+                </button>
             </div>
         </div>
     </header>
 
     <main id="dashboard-main">
+        <!-- Config Paste Panel -->
+        <section id="config-panel" class="section config-panel hidden">
+            <h2 class="section-title">📋 Paste Cloud Configuration</h2>
+            <p class="config-description">Paste your raw AWS/Cloud configuration (JSON or YAML) below. CloudShield will analyze it for misconfigurations, compliance violations, and security issues.</p>
+            <div class="config-controls">
+                <div class="config-type-selector">
+                    <label class="radio-label">
+                        <input type="radio" name="config-type" value="json" checked> JSON
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="config-type" value="yaml"> YAML
+                    </label>
+                </div>
+                <div class="config-templates">
+                    <button class="btn btn-sm" onclick="loadSampleBadConfig()">📥 Load Bad Config (Sample)</button>
+                    <button class="btn btn-sm" onclick="clearConfigEditor()">🗑️ Clear</button>
+                </div>
+            </div>
+            <textarea id="config-editor" class="config-editor" placeholder='Paste your cloud configuration here...
+
+Example JSON:
+{
+  "s3_buckets": [
+    {
+      "name": "my-bucket",
+      "acl": "public-read",
+      "encryption": { "enabled": false },
+      "logging": { "enabled": false }
+    }
+  ],
+  "iam_roles": [
+    {
+      "name": "admin-role",
+      "mfa_required": false,
+      "policies": [
+        { "name": "full-access", "action": "*", "resource": "*" }
+      ]
+    }
+  ]
+}'></textarea>
+            <div class="config-actions">
+                <button id="btn-analyze" class="btn btn-primary btn-lg" onclick="scanRawConfig()">
+                    <span class="btn-icon">🔍</span> Analyze Configuration
+                </button>
+                <span id="config-status" class="config-status"></span>
+            </div>
+        </section>
+
+        <!-- Alerts Section (NEW) -->
+        <section id="alerts-section" class="section hidden">
+            <h2 class="section-title">🚨 Security Alerts</h2>
+            <div id="alert-summary" class="alert-summary-bar"></div>
+            <div id="alerts-container" class="alerts-container"></div>
+        </section>
+
         <!-- Pipeline Flow -->
         <section id="pipeline-section" class="section">
             <h2 class="section-title">Execution Pipeline</h2>
@@ -159,6 +217,12 @@
                     <tbody id="top-issues-body"></tbody>
                 </table>
             </div>
+        </section>
+
+        <!-- Remediation Panel (NEW) -->
+        <section id="remediation-section" class="section hidden">
+            <h2 class="section-title">🔧 Remediation Actions</h2>
+            <div id="remediation-container" class="remediation-container"></div>
         </section>
 
         <!-- Execution Log -->

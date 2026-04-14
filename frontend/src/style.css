@@ -456,3 +456,193 @@ footer {
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
+
+/* ── Paste & Scan Button ── */
+.btn-paste {
+    background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+    color: white;
+    box-shadow: 0 2px 12px rgba(245, 158, 11, 0.3);
+}
+.btn-paste:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(245, 158, 11, 0.4);
+}
+.btn-sm {
+    padding: 0.35rem 0.8rem;
+    font-size: 0.75rem;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-glass);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-sm:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+.btn-xs {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.7rem;
+    background: var(--accent-blue);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--font);
+}
+.btn-lg { padding: 0.8rem 2rem; font-size: 1rem; }
+
+/* ── Config Panel ── */
+.config-panel {
+    background: var(--bg-glass);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    backdrop-filter: blur(10px);
+    animation: slideDown 0.3s ease;
+}
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.config-description {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+}
+.config-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+.config-type-selector {
+    display: flex;
+    gap: 1rem;
+}
+.radio-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.radio-label input[type="radio"] { accent-color: var(--accent-blue); }
+.config-templates { display: flex; gap: 0.5rem; }
+.config-editor {
+    width: 100%;
+    min-height: 250px;
+    padding: 1rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-sm);
+    color: var(--color-low);
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    resize: vertical;
+    tab-size: 2;
+}
+.config-editor:focus { outline: none; border-color: var(--accent-blue); box-shadow: 0 0 0 2px rgba(59,130,246,0.2); }
+.config-editor::placeholder { color: var(--text-muted); }
+.config-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+.config-status {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+.config-status.error { color: var(--color-critical); }
+.config-status.success { color: var(--color-low); }
+.config-status.loading { color: var(--color-info); }
+
+/* ── Alerts Section ── */
+.alert-summary-bar {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+.alert-stat {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-glass);
+}
+.alert-stat.critical { border-color: rgba(239,68,68,0.4); color: var(--color-critical); }
+.alert-stat.high { border-color: rgba(249,115,22,0.4); color: var(--color-high); }
+.alert-stat.medium { border-color: rgba(234,179,8,0.4); color: var(--color-medium); }
+.alert-stat.low { border-color: rgba(34,197,94,0.4); color: var(--color-low); }
+.alert-stat.total { border-color: rgba(59,130,246,0.4); color: var(--accent-blue); }
+.alert-count { font-size: 1.2rem; font-weight: 800; }
+
+.alerts-container {
+    display: grid;
+    gap: 0.75rem;
+}
+.alert-card {
+    background: var(--bg-glass);
+    border-radius: var(--radius-sm);
+    padding: 1rem 1.25rem;
+    border-left: 4px solid var(--text-muted);
+    animation: fadeInLog 0.3s ease;
+}
+.alert-card.alert-critical { border-left-color: var(--color-critical); background: rgba(239,68,68,0.05); }
+.alert-card.alert-high { border-left-color: var(--color-high); background: rgba(249,115,22,0.05); }
+.alert-card.alert-medium { border-left-color: var(--color-medium); background: rgba(234,179,8,0.05); }
+.alert-card.alert-low { border-left-color: var(--color-low); background: rgba(34,197,94,0.05); }
+.alert-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.alert-level { font-size: 0.85rem; font-weight: 700; }
+.alert-title { font-size: 0.9rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.3rem; }
+.alert-message { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.5rem; }
+.alert-meta { display: flex; gap: 1.5rem; font-size: 0.75rem; color: var(--text-muted); }
+.alert-meta code { color: var(--accent-blue); }
+
+/* ── Remediation Cards ── */
+.remediation-container { display: grid; gap: 1rem; }
+.remediation-card {
+    background: var(--bg-glass);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    transition: all 0.2s;
+}
+.remediation-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-card); }
+.confidence-high { border-left: 4px solid var(--color-low); }
+.confidence-medium { border-left: 4px solid var(--color-medium); }
+.confidence-low { border-left: 4px solid var(--text-muted); }
+.rem-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem; }
+.rem-title { font-weight: 600; font-size: 0.9rem; }
+.badge-confidence-high { background: rgba(34,197,94,0.15); color: var(--color-low); border: 1px solid rgba(34,197,94,0.3); }
+.badge-confidence-medium { background: rgba(234,179,8,0.15); color: var(--color-medium); border: 1px solid rgba(234,179,8,0.3); }
+.badge-confidence-low { background: rgba(148,163,184,0.15); color: var(--text-muted); border: 1px solid rgba(148,163,184,0.3); }
+.rem-description { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.75rem; }
+.rem-command {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem;
+}
+.rem-command-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; font-size: 0.75rem; color: var(--text-muted); }
+.rem-command pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
+.rem-command code { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--color-info); }
+.rem-meta { display: flex; gap: 1.5rem; margin-top: 0.75rem; font-size: 0.75rem; color: var(--text-muted); }
+.rem-meta code { color: var(--accent-blue); }
+
+/* ── Error Pipeline ── */
+.pipeline-step.error {
+    border-color: var(--color-critical);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.15);
+}
+
+/* ── Log error entry ── */
+.log-entry.error { color: var(--color-critical); }
