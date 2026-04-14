@@ -71,8 +71,8 @@ function updateStatusBar() {
     const sbUpdated = document.getElementById('sb-last-updated');
     const bar = document.getElementById('global-status-bar');
 
-    if (sbAgents)  sbAgents.textContent  = agents.length ? `${online}/${agents.length}` : '—';
-    if (sbThreats) sbThreats.textContent = threats;
+    if (sbAgents)  sbAgents.textContent  = agents.length ? `${online}/${agents.length}` : '0/0';
+    if (sbThreats) sbThreats.textContent = threats || 0;
     if (sbUpdated) sbUpdated.textContent = new Date().toLocaleTimeString();
 
     if (sbStatus) {
@@ -162,8 +162,14 @@ function updateRiskTrendChart(score) {
 
 // ── Scan History (localStorage) ──
 function getScanHistory() {
-    try { return JSON.parse(localStorage.getItem('cloudshield_scan_history') || '[]'); }
-    catch { return []; }
+    try { 
+        const h = JSON.parse(localStorage.getItem('cloudshield_scan_history') || '[]');
+        return Array.isArray(h) ? h : [];
+    }
+    catch { 
+        localStorage.removeItem('cloudshield_scan_history');
+        return []; 
+    }
 }
 function saveScanToHistory(data) {
     if (!data) return;
@@ -571,13 +577,13 @@ async function fetchAgentTelemetry() {
         const container = document.getElementById('telemetry-container');
         const loading   = document.getElementById('telemetry-loading');
         const controls  = document.getElementById('fleet-controls');
-        if (!badge || !container || !loading) return;
+        if (!badge || !container) return;
 
         if (!json.agents?.length) {
             badge.textContent = '🔴 Offline';
             badge.style.cssText = 'background:rgba(239,68,68,0.1);color:var(--color-critical);';
-            container.innerHTML = '';
-            loading.style.display = 'block';
+            container.innerHTML = '<div style="color:var(--text-secondary);text-align:center;padding:2rem;">No agents currently connected.</div>';
+            if (loading) loading.style.display = 'none';
             if (controls) controls.style.display = 'none';
             document.getElementById('fleet-critical-banner')?.remove();
             lastAgentsData = [];

@@ -78,7 +78,7 @@
                     <button class="btn btn-sm" onclick="clearConfigEditor()">🗑️ Clear</button>
                 </div>
             </div>
-            <textarea id="config-editor" class="config-editor" placeholder='Paste your cloud configuration here...
+            <textarea id="config-editor" class="config-editor" aria-label="Paste cloud configuration JSON or YAML" placeholder='Paste your cloud configuration here...
 
 Example JSON:
 {
@@ -134,7 +134,7 @@ Example JSON:
             </div>
             
             <div class="s3-input-group" style="display: flex; gap: 1rem; align-items: center;">
-                <input type="text" id="s3-bucket-name" placeholder="my-test-bucket-name" style="padding: 0.8rem; border-radius: 4px; border: 1px solid var(--border-glass); background: var(--bg-primary); color: var(--text-primary); flex-grow: 1;">
+                <input type="text" id="s3-bucket-name" aria-label="Enter storage bucket or resource name" placeholder="my-test-bucket-name" style="padding: 0.8rem; border-radius: 4px; border: 1px solid var(--border-glass); background: var(--bg-primary); color: var(--text-primary); flex-grow: 1;">
                 <button id="btn-check-s3" class="btn btn-primary" onclick="checkS3Bucket()">
                     <span class="btn-icon">☁️</span> Check Storage
                 </button>
