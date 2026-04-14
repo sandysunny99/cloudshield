@@ -391,6 +391,7 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 .badge-high { background: rgba(249,115,22,0.15); color: var(--color-high); border: 1px solid rgba(249,115,22,0.3); }
 .badge-medium { background: rgba(234,179,8,0.15); color: var(--color-medium); border: 1px solid rgba(234,179,8,0.3); }
 .badge-low { background: rgba(34,197,94,0.15); color: var(--color-low); border: 1px solid rgba(34,197,94,0.3); }
+.badge-info { background: rgba(6,182,212,0.15); color: var(--color-info); border: 1px solid rgba(6,182,212,0.3); }
 
 /* ── Execution Log ── */
 .log-container {

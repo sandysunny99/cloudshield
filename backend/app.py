@@ -11,6 +11,14 @@ import tempfile
 import yaml
 import boto3
 from botocore.exceptions import ClientError, BotoCoreError
+
+# Multi-cloud SDKs
+from azure.storage.blob import BlobServiceClient
+from azure.core.exceptions import AzureError
+from google.cloud import storage
+from google.api_core.exceptions import GoogleAPIError
+from google.oauth2 import service_account
+
 from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -116,59 +124,106 @@ def create_app():
             if body is None:
                 return jsonify({"status": "error", "message": "Failed to parse JSON configuration"}), 400
 
+            provider = body.get("provider", "aws").lower()
             bucket_name = body.get("bucket", "")
             if not isinstance(bucket_name, str) or not bucket_name.strip():
                 return jsonify({"status": "error", "message": "Bucket name is required and must be a string"}), 400
 
             bucket_name = bucket_name.strip()
-            print(f"[AWS] Checking S3 bucket: {bucket_name}")
+            print(f"[{provider.upper()}] Checking storage: {bucket_name}")
 
-            # Configure boto3 using environment variables automatically
-            s3_client = boto3.client('s3')
-            
-            # 1. get_public_access_block
-            blocks_public_acls = False
-            try:
-                pab = s3_client.get_public_access_block(Bucket=bucket_name)
-                config = pab.get('PublicAccessBlockConfiguration', {})
-                blocks_public_acls = config.get('BlockPublicAcls', False) and config.get('IgnorePublicAcls', False)
-            except ClientError as e:
-                error_code = e.response['Error']['Code']
-                if error_code == 'NoSuchPublicAccessBlockConfiguration':
-                    blocks_public_acls = False
-                elif error_code == 'AccessDenied':
-                    print(f"[AWS Error] Access Denied checking PublicAccessBlock for {bucket_name}")
-                    return jsonify({"status": "error", "message": "Access Denied. Check AWS credentials."}), 403
-                elif error_code == 'NoSuchBucket':
-                    print(f"[AWS Error] Bucket {bucket_name} not found")
-                    return jsonify({"status": "error", "message": f"Bucket '{bucket_name}' not found."}), 404
-                else:
-                    print(f"[AWS Error] {str(e)}")
-                    return jsonify({"status": "error", "message": f"AWS Error: {str(e)}"}), 500
-            except BotoCoreError as e:
-                print(f"[AWS Error] BotoCoreError: {str(e)}")
-                return jsonify({"status": "error", "message": f"AWS Configuration error: {str(e)}"}), 500
+            is_public = False
 
-            # 2. get_bucket_acl
-            has_public_acl = False
-            try:
-                acl = s3_client.get_bucket_acl(Bucket=bucket_name)
-                for grant in acl.get('Grants', []):
-                    grantee = grant.get('Grantee', {})
-                    if grantee.get('URI') in [
-                        'http://acs.amazonaws.com/groups/global/AllUsers',
-                        'http://acs.amazonaws.com/groups/global/AuthenticatedUsers'
-                    ]:
-                        has_public_acl = True
-                        break
-            except ClientError as e:
-                print(f"[AWS Error] Error fetching ACLs for {bucket_name}: {str(e)}")
-                pass
+            if provider == "aws":
+                # Configure boto3 using environment variables automatically
+                s3_client = boto3.client('s3')
+                
+                # 1. get_public_access_block
+                blocks_public_acls = False
+                try:
+                    pab = s3_client.get_public_access_block(Bucket=bucket_name)
+                    config = pab.get('PublicAccessBlockConfiguration', {})
+                    blocks_public_acls = config.get('BlockPublicAcls', False) and config.get('IgnorePublicAcls', False)
+                except ClientError as e:
+                    error_code = e.response['Error']['Code']
+                    if error_code == 'NoSuchPublicAccessBlockConfiguration':
+                        blocks_public_acls = False
+                    elif error_code == 'AccessDenied':
+                        print(f"[{provider.upper()} Error] Access Denied checking PublicAccessBlock for {bucket_name}")
+                        return jsonify({"status": "error", "message": "Access Denied. Check AWS credentials."}), 403
+                    elif error_code == 'NoSuchBucket':
+                        return jsonify({"status": "error", "message": f"Bucket '{bucket_name}' not found."}), 404
+                    else:
+                        return jsonify({"status": "error", "message": f"AWS Error: {str(e)}"}), 500
+                except BotoCoreError as e:
+                    return jsonify({"status": "error", "message": f"AWS Configuration error: {str(e)}"}), 500
 
-            # Detect public access: AllUsers ACL + no block
-            is_public = has_public_acl and not blocks_public_acls
+                # 2. get_bucket_acl
+                has_public_acl = False
+                try:
+                    acl = s3_client.get_bucket_acl(Bucket=bucket_name)
+                    for grant in acl.get('Grants', []):
+                        grantee = grant.get('Grantee', {})
+                        if grantee.get('URI') in [
+                            'http://acs.amazonaws.com/groups/global/AllUsers',
+                            'http://acs.amazonaws.com/groups/global/AuthenticatedUsers'
+                        ]:
+                            has_public_acl = True
+                            break
+                except ClientError as e:
+                    pass
+
+                # Detect public access: AllUsers ACL + no block
+                is_public = has_public_acl and not blocks_public_acls
+
+            elif provider == "azure":
+                azure_conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+                if not azure_conn_str:
+                    return jsonify({"status": "error", "message": "AZURE_STORAGE_CONNECTION_STRING environment variable is missing"}), 400
+                
+                try:
+                    blob_service_client = BlobServiceClient.from_connection_string(azure_conn_str)
+                    container_client = blob_service_client.get_container_client(bucket_name)
+                    props = container_client.get_container_properties()
+                    # public_access can be 'blob', 'container', or None
+                    if props.public_access in ['blob', 'container']:
+                        is_public = True
+                except AzureError as e:
+                    if 'ContainerNotFound' in str(e):
+                        return jsonify({"status": "error", "message": f"Container '{bucket_name}' not found."}), 404
+                    return jsonify({"status": "error", "message": f"Azure Error: {str(e)}"}), 500
+
+            elif provider == "gcp":
+                gcp_creds_json = os.environ.get("GCP_CREDENTIALS_JSON")
+                try:
+                    if gcp_creds_json:
+                        creds_dict = json.loads(gcp_creds_json)
+                        credentials = service_account.Credentials.from_service_account_info(creds_dict)
+                        gcp_client = storage.Client(credentials=credentials)
+                    else:
+                        return jsonify({"status": "error", "message": "GCP_CREDENTIALS_JSON environment variable is missing"}), 400
+
+                    bucket = gcp_client.bucket(bucket_name)
+                    if not bucket.exists():
+                        return jsonify({"status": "error", "message": f"Bucket '{bucket_name}' not found."}), 404
+                        
+                    policy = bucket.get_iam_policy(requested_policy_version=3)
+                    
+                    for binding in policy.bindings:
+                        if binding.get('role') in ['roles/storage.objectViewer', 'roles/storage.legacyObjectReader', 'roles/storage.admin']:
+                            if 'allUsers' in binding.get('members', []) or 'allAuthenticatedUsers' in binding.get('members', []):
+                                is_public = True
+                                break
+                except GoogleAPIError as e:
+                    return jsonify({"status": "error", "message": f"GCP Error: {str(e)}"}), 500
+                except json.JSONDecodeError:
+                    return jsonify({"status": "error", "message": "Failed to parse GCP_CREDENTIALS_JSON."}), 500
+
+            else:
+                return jsonify({"status": "error", "message": f"Unsupported provider '{provider}'"}), 400
 
             return jsonify({
+                "provider": provider,
                 "bucket": bucket_name,
                 "isPublic": is_public,
                 "status": "FAIL" if is_public else "PASS"

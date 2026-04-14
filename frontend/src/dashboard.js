@@ -208,28 +208,30 @@ async function scanRawConfig() {
     setButtonsDisabled(false);
 }
 
-// ── NEW: Single S3 Bucket Check ──
+// ── NEW: Multi-Cloud Single Storage Check ──
 async function checkS3Bucket() {
     const bucketName = document.getElementById('s3-bucket-name').value.trim();
+    const providerEle = document.querySelector('input[name="cloud-provider"]:checked');
+    const provider = providerEle ? providerEle.value : 'aws';
     const resultDiv = document.getElementById('s3-check-result');
     const btn = document.getElementById('btn-check-s3');
 
     if (!bucketName) {
         resultDiv.style.display = 'block';
-        resultDiv.innerHTML = '<span style="color:var(--color-critical)">❌ Please enter a bucket name</span>';
+        resultDiv.innerHTML = '<span style="color:var(--color-critical)">❌ Please enter a bucket/container name</span>';
         return;
     }
 
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Checking...';
     resultDiv.style.display = 'block';
-    resultDiv.innerHTML = '<span style="color:var(--color-info)">⏳ Checking AWS S3 configuration...</span>';
+    resultDiv.innerHTML = `<span style="color:var(--color-info)">⏳ Checking ${provider.toUpperCase()} configuration...</span>`;
 
     try {
         const res = await fetch(`${API_BASE}/api/check-bucket`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ bucket: bucketName })
+            body: JSON.stringify({ provider: provider, bucket: bucketName })
         });
         
         const json = await res.json();
@@ -241,10 +243,11 @@ async function checkS3Bucket() {
             const statusColor = isPublic ? 'var(--color-critical)' : 'var(--color-low)';
             const statusIcon = isPublic ? '🚨' : '✅';
             const statusText = isPublic ? 'PUBLICLY ACCESSIBLE' : 'SECURE (Private)';
+            const providerTag = `<span class="badge ${json.provider === 'aws' ? 'badge-medium' : json.provider === 'azure' ? 'badge-info' : 'badge-high'}" style="margin-right:0.5rem">${json.provider.toUpperCase()}</span>`;
             
             resultDiv.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <strong>Bucket:</strong> <code>${escapeHtml(json.bucket)}</code>
+                    <div>${providerTag}<strong>Bucket:</strong> <code>${escapeHtml(json.bucket)}</code></div>
                 </div>
                 <div style="margin-top:0.5rem; font-size:1.1rem; color:${statusColor}; font-weight:bold;">
                     ${statusIcon} ${statusText}
@@ -259,7 +262,7 @@ async function checkS3Bucket() {
     }
 
     btn.disabled = false;
-    btn.innerHTML = '<span class="btn-icon">☁️</span> Check Bucket';
+    btn.innerHTML = '<span class="btn-icon">☁️</span> Check Storage';
 }
 
 // ── NEW: Render Alerts ──
