@@ -166,6 +166,41 @@ Example JSON:
             
         </section>
 
+        <!-- Attack Dashboard (Phase 2) -->
+        <section id="attack-dashboard" class="section config-panel hidden" style="margin-top: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                    <h2 class="section-title">🛡️ Attack Dashboard</h2>
+                    <p class="config-description">Real-time visibility into Cloudflare WAF edge blocks and spoofing origins.</p>
+                </div>
+                <div>
+                    <button class="btn btn-sm btn-outline" onclick="fetchSecurityMetrics()">
+                        <span class="btn-icon">🔄</span> Refresh
+                    </button>
+                </div>
+            </div>
+
+            <div class="cards-grid" style="margin-top: 1rem;">
+                <div class="card card-vulns">
+                    <div class="card-icon">🚫</div>
+                    <div class="card-value" id="metric-blocked-ips">0</div>
+                    <div class="card-label">Active Edge Bans</div>
+                </div>
+                <div class="card card-correlated">
+                    <div class="card-icon">⚠️</div>
+                    <div class="card-value" id="metric-attack-ips">0</div>
+                    <div class="card-label">Spoofing Origins</div>
+                </div>
+            </div>
+
+            <div style="margin-top: 1.5rem; background: rgba(0,0,0,0.2); padding: 1rem; border: 1px solid var(--border-glass); border-radius: 4px;">
+                <h3 style="margin-top:0; font-size: 1rem;">Currently Blocked IPs</h3>
+                <div id="blocked-ips-list" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                    <div style="color:var(--text-secondary); font-size: 0.85rem;">No active blocks.</div>
+                </div>
+            </div>
+        </section>
+
         <!-- Alerts Section (NEW) -->
         <section id="alerts-section" class="section hidden">
             <h2 class="section-title">🚨 Security Alerts</h2>

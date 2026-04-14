@@ -100,12 +100,42 @@ def create_app():
     
     # Cloudflare Auto-Block Tracking
     FAILED_AUTH_TRACKER = {}  # { ip: { "count": int, "first_attempt": timestamp } }
-    BLOCKED_IPS = set()       # Prevent duplicate blocks
+    BLOCKED_IPS = {}          # { ip: { "rule_id": str, "banned_at": ts, "expires_at": ts } }
     
     CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
     CF_ZONE_ID = os.environ.get("CF_ZONE_ID")
     CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID")
     SAFE_IPS = [ip.strip() for ip in os.environ.get("SAFE_IPS", "").split(",") if ip.strip()]
+
+    def _cleanup_expired_bans():
+        while True:
+            time.sleep(60)
+            now = time.time()
+            expired = []
+            for ip, data in list(BLOCKED_IPS.items()):
+                if now > data["expires_at"]:
+                    expired.append((ip, data["rule_id"]))
+            
+            for ip, rule_id in expired:
+                if rule_id and CF_API_TOKEN and CF_ZONE_ID:
+                    print(f"[SECURITY] Unblocking IP {ip} (Ban expired)")
+                    url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/firewall/access_rules/rules/{rule_id}"
+                    headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
+                    try:
+                        res = requests.delete(url, headers=headers, timeout=5)
+                        if res.status_code == 200:
+                            print(f"[CF-API] Lifted block for {ip}")
+                        else:
+                            print(f"[CF-API] Failed to lift block for {ip} - {res.status_code}")
+                    except Exception as e:
+                        print(f"[CF-API] Failed targeting Edge API: {str(e)}")
+                
+                # Cleanup local maps
+                if ip in BLOCKED_IPS: del BLOCKED_IPS[ip]
+                if ip in FAILED_AUTH_TRACKER: del FAILED_AUTH_TRACKER[ip]
+
+    # Start cleanup thread
+    threading.Thread(target=_cleanup_expired_bans, daemon=True).start()
 
     def block_ip_in_cloudflare(ip):
         if not CF_API_TOKEN or not CF_ZONE_ID:
@@ -133,7 +163,11 @@ def create_app():
             try:
                 res = requests.post(url, headers=headers, json=payload, timeout=5)
                 if res.status_code == 200:
-                    print(f"[SECURITY][SUCCESS] Edge block applied successfully for IP: {ip}")
+                    data = res.json()
+                    rule_id = data.get("result", {}).get("id")
+                    if rule_id and ip in BLOCKED_IPS:
+                        BLOCKED_IPS[ip]["rule_id"] = rule_id
+                    print(f"[SECURITY][SUCCESS] Edge block applied successfully for IP: {ip} (Rule: {rule_id})")
                 else:
                     print(f"[SECURITY][ERROR] Failed to block IP at Edge: {res.status_code} - {res.text}")
             except Exception as e:
@@ -163,10 +197,42 @@ def create_app():
         
         print(f"[SECURITY][FAILED_AUTH] IP={ip} Attempts={record['count']}/5")
         
-        if record["count"] >= 5:
+        if record["count"] >= 5 and ip not in BLOCKED_IPS:
             print(f"[CRITICAL] Blocking IP {ip}")
-            BLOCKED_IPS.add(ip)
+            # Placeholder until async finishes
+            now = time.time()
+            BLOCKED_IPS[ip] = {"rule_id": None, "banned_at": now, "expires_at": now + 3600}
             block_ip_in_cloudflare(ip)
+
+    @app.route("/api/security-metrics", methods=["GET"])
+    def api_security_metrics():
+        active_blocks = []
+        now = time.time()
+        for ip, data in BLOCKED_IPS.items():
+            active_blocks.append({
+                "ip": ip,
+                "time_remaining_seconds": max(0, int(data["expires_at"] - now)),
+                "rule_id": data["rule_id"]
+            })
+            
+        attacks = []
+        for ip, tr in FAILED_AUTH_TRACKER.items():
+            if tr["count"] > 0:
+                attacks.append({
+                    "ip": ip,
+                    "attempts": tr["count"],
+                    "first_attempt": tr["first_attempt"]
+                })
+        
+        return jsonify({
+            "status": "success",
+            "metrics": {
+                "total_blocked": len(active_blocks),
+                "total_attack_ips": len(attacks),
+                "blocked_ips": active_blocks,
+                "recent_attacks": attacks
+            }
+        })
 
     @app.route("/api/agent-scan", methods=["POST", "OPTIONS"])
     @limiter.limit("30 per minute")

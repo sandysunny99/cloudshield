@@ -39,11 +39,23 @@ document.addEventListener('DOMContentLoaded', () => {
         telemetryPanel.classList.remove('hidden');
         pastePanel.classList.add('hidden');
         s3Panel.classList.add('hidden');
+        document.getElementById('attack-dashboard')?.classList.remove('hidden');
+    });
+
+    document.getElementById('btn-paste-panel')?.addEventListener('click', () => {
+        pastePanel.classList.remove('hidden');
+        telemetryPanel.classList.add('hidden');
+        s3Panel.classList.add('hidden');
+        document.getElementById('attack-dashboard')?.classList.add('hidden');
     });
 
     // Start Telemetry Polling
     fetchAgentTelemetry();
     setInterval(fetchAgentTelemetry, 10000); // 10 seconds
+
+    // Start Security Metrics Polling
+    fetchSecurityMetrics();
+    setInterval(fetchSecurityMetrics, 10000);
 });
 
 // ── API Calls ──
@@ -306,6 +318,40 @@ function exportStorageReport() {
     a.click();
     URL.revokeObjectURL(url);
 }
+
+// ── NEW: Security Metrics Fetching (Attack Dashboard) ──
+window.fetchSecurityMetrics = async function() {
+    try {
+        const res = await fetch(`${API_BASE}/api/security-metrics`);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json.status !== 'success') return;
+        
+        const metrics = json.metrics || {};
+        
+        const blockedEl = document.getElementById('metric-blocked-ips');
+        if (blockedEl) blockedEl.textContent = metrics.total_blocked || 0;
+        
+        const attackEl = document.getElementById('metric-attack-ips');
+        if (attackEl) attackEl.textContent = metrics.total_attack_ips || 0;
+        
+        const listDiv = document.getElementById('blocked-ips-list');
+        if (listDiv) {
+            if (!metrics.blocked_ips || metrics.blocked_ips.length === 0) {
+                listDiv.innerHTML = '<div style="color:var(--text-secondary); font-size: 0.85rem;">No active blocks.</div>';
+            } else {
+                listDiv.innerHTML = metrics.blocked_ips.map(b => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:0.5rem; font-size: 0.85rem;">
+                        <div><strong style="color:var(--color-critical)">${escapeHtml(b.ip)}</strong> <span style="color:var(--text-secondary); margin-left:0.5rem; font-size:0.75rem;">(Rule: ${escapeHtml(b.rule_id || 'Pending')})</span></div>
+                        <div style="color:var(--text-secondary)">Expires in: <strong style="color:var(--color-info);">${b.time_remaining_seconds}s</strong></div>
+                    </div>
+                `).join('');
+            }
+        }
+    } catch(err) {
+        console.error('Metrics fetch error:', err);
+    }
+};
 
 // ── NEW: Agent Telemetry Polling & Sorting State ──
 let currentFleetSort = 'risk';
