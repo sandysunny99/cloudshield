@@ -27,6 +27,43 @@ def _opa_available() -> bool:
         return False
 
 
+def _normalize_input(data: dict) -> dict:
+    """Normalizes arbitrary input into strict OPA-compliant lists."""
+    normalized = {
+        "s3_buckets": [],
+        "iam_roles": [],
+        "security_groups": []
+    }
+
+    # Handle S3
+    if "s3" in data:
+        normalized["s3_buckets"].append({
+            "name": data["s3"].get("bucket_name", "unknown"),
+            "public": data["s3"].get("public", False),
+            "encryption": {"enabled": data["s3"].get("encryption", True)}
+        })
+    elif "s3_buckets" in data:
+        normalized["s3_buckets"] = data["s3_buckets"]
+
+    # Handle IAM
+    if "iam" in data and "users" in data["iam"]:
+        for user in data["iam"]["users"]:
+            normalized["iam_roles"].append({
+                "name": user.get("name", "unknown"),
+                # Remap "policy" to a mock policies list for basic compatibility or direct access depending on Rego
+                "policy": user.get("policy", "")
+            })
+    elif "iam_roles" in data:
+        normalized["iam_roles"] = data["iam_roles"]
+
+    # Handle Security Groups
+    if "security_groups" in data:
+        # Phase 4 strict normalizer pass-through since schema exactly matches arrays
+        normalized["security_groups"] = data["security_groups"]
+
+    return normalized
+
+
 def evaluate_cloud_config(config: dict, policy_name: str = "cloudshield") -> dict:
     """
     Evaluate a cloud configuration dict against loaded Rego policies.
@@ -41,13 +78,14 @@ def evaluate_cloud_config(config: dict, policy_name: str = "cloudshield") -> dic
         }
 
     scanned_at = datetime.utcnow().isoformat() + "Z"
+    normalized_config = _normalize_input(config)
 
     # Try OPA REST API first
     if _opa_available():
-        return _evaluate_via_opa_api(config, policy_name, scanned_at)
+        return _evaluate_via_opa_api(normalized_config, policy_name, scanned_at)
     else:
         # Fallback to built-in Python rule engine
-        return _evaluate_builtin(config, scanned_at)
+        return _evaluate_builtin(normalized_config, scanned_at)
 
 
 def _evaluate_via_opa_api(config: dict, policy_name: str, scanned_at: str) -> dict:
@@ -140,6 +178,12 @@ def _evaluate_builtin(config: dict, scanned_at: str) -> dict:
         if not role.get("mfa_required", True):
             add("HIGH", "IAM Role MFA Not Required",
                 f"IAM role '{name}' does not enforce multi-factor authentication.", name)
+        
+        # Check simple policy string "*:*"
+        if role.get("policy") == "*:*":
+            add("CRITICAL", "IAM Wildcard Permissions",
+                f"IAM role '{name}' has wildcard action on all resources.", name)
+            
         for policy in role.get("policies", []):
             action = policy.get("action", "")
             resource = policy.get("resource", "")
@@ -151,7 +195,9 @@ def _evaluate_builtin(config: dict, scanned_at: str) -> dict:
     # ── Security Groups / Firewall ──
     for sg in config.get("security_groups", []):
         name = sg.get("name", "unnamed")
-        for rule in sg.get("ingress_rules", []):
+        # Check both legacy 'ingress_rules' and new strict 'inbound' key
+        rules = sg.get("inbound", sg.get("ingress_rules", []))
+        for rule in rules:
             if rule.get("cidr") in ("0.0.0.0/0", "::/0"):
                 port = rule.get("port", "any")
                 proto = rule.get("protocol", "tcp")
