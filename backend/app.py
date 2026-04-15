@@ -44,6 +44,7 @@ from risk_engine import compute_risk_scores
 from remediation import generate_remediations
 from compliance import map_compliance, get_compliance_summary
 from scanner import parse_trivy_output, get_scan_summary
+from services.storage_service import check_storage_public
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "results_cache.json")
 CACHE_TTL = 300  # 5 minutes
@@ -535,192 +536,23 @@ def create_app():
             add_soc_event("WARNING", f"/api/demo server error: {str(exc)}")
             return jsonify({"status": "error", "message": "Internal demo error. Check server logs."}), 500
 
-    # ── NEW: Enterprise Storage Check Endpoint ──
-    STORAGE_CACHE = {}
-
-    @app.route("/api/check-storage", methods=["POST", "OPTIONS"])
-    @limiter.limit("10 per minute")
-    @limiter.limit("100 per day")
-    def api_check_storage():
-        start_time = time.perf_counter()
-        scanned_at = datetime.utcnow().isoformat() + "Z"
-        
-        if request.method == "OPTIONS":
-            return jsonify({}), 200
-
+    @app.route("/api/storage/check", methods=["POST"])
+    def check_storage():
         try:
-            body = request.get_json(silent=True)
-            if body is None:
-                return jsonify({"status": "error", "message": "Failed to parse JSON configuration"}), 400
+            data = request.json
+            provider = data.get("provider")
+            bucket = data.get("bucket")
 
-            provider = body.get("provider", "aws").lower()
-            resource_name = body.get("resource", "")
-            
-            # Input validation
-            if not isinstance(resource_name, str) or not re.match(r"^[a-zA-Z0-9.\-_]{3,255}$", resource_name):
-                return jsonify({"status": "error", "message": "Invalid resource name format"}), 400
+            result = check_storage_public(provider, bucket)
 
-            # Caching check
-            cache_key = f"{provider}:{resource_name}"
-            if cache_key in STORAGE_CACHE:
-                cached_entry = STORAGE_CACHE[cache_key]
-                if time.time() - cached_entry['ts'] < 300: # 5 mins TTL
-                    # Update dynamic time fields for cached entry
-                    c_data = cached_entry['data'].copy()
-                    c_data['scanDurationMs'] = round((time.perf_counter() - start_time) * 1000, 2)
-                    c_data['scannedAt'] = scanned_at
-                    return jsonify(c_data)
+            return jsonify(result)
 
-            is_public = False
-            risk = "Low"
-            exposure_type = "None"
-            details = "Resource is securely configured and private."
-            remediation = "No action required."
-            confidence = 100
-
-            boto_config = Config(connect_timeout=3, read_timeout=3, retries={'max_attempts': 1})
-
-            if provider == "aws":
-                s3_client = boto3.client('s3', config=boto_config)
-                
-                blocks_public_acls = False
-                public_acl_found = False
-                public_policy_found = False
-                
-                # Check Public Access Block
-                try:
-                    pab = s3_client.get_public_access_block(Bucket=resource_name)
-                    config = pab.get('PublicAccessBlockConfiguration', {})
-                    blocks_public_acls = config.get('BlockPublicAcls', False) and config.get('IgnorePublicAcls', False)
-                except ClientError as e:
-                    code = e.response['Error']['Code']
-                    if code == 'NoSuchPublicAccessBlockConfiguration':
-                        pass
-                    elif code == 'AccessDenied':
-                        return jsonify({"status": "error", "message": "Access Denied. Check AWS credentials."}), 403
-                    elif code == 'NoSuchBucket':
-                        return jsonify({"status": "error", "message": f"Bucket not found."}), 404
-                    else:
-                        return jsonify({"status": "error", "message": "Cloud Provider Error"}), 500
-                except BotoCoreError:
-                    return jsonify({"status": "error", "message": "Configuration Error"}), 500
-
-                # Check ACL
-                try:
-                    acl = s3_client.get_bucket_acl(Bucket=resource_name)
-                    for grant in acl.get('Grants', []):
-                        uri = grant.get('Grantee', {}).get('URI', '')
-                        if 'AllUsers' in uri or 'AuthenticatedUsers' in uri:
-                            public_acl_found = True
-                            break
-                except ClientError:
-                    pass
-
-                # Check Policy
-                try:
-                    policy_str = s3_client.get_bucket_policy(Bucket=resource_name).get('Policy', '{}')
-                    policy = json.loads(policy_str)
-                    for statement in policy.get('Statement', []):
-                        if statement.get('Effect') == 'Allow' and statement.get('Principal') in ['*', {'AWS': '*'}]:
-                            public_policy_found = True
-                            if statement.get('Condition'):
-                                risk = "Medium"
-                                exposure_type = "restricted_public"
-                                details = "Bucket Policy allows public access but enforces restrictions via conditions (e.g., IP Allowlist/VPC endpoints)."
-                                confidence = 85
-                            else:
-                                risk = "Critical"
-                                exposure_type = "Public Bucket Policy"
-                                details = "Bucket Policy contains a wildcard Principal (*) with an Allow effect."
-                                confidence = 95
-                            break
-                except ClientError:
-                    pass
-
-                if public_acl_found and not blocks_public_acls:
-                    is_public = True
-                    risk = "Critical"
-                    exposure_type = "Public ACL"
-                    details = "Bucket ACL explicitly grants access to AllUsers or AuthenticatedUsers."
-                    remediation = f"aws s3api put-bucket-acl --bucket {resource_name} --acl private"
-                elif public_policy_found:
-                    is_public = True
-                    # risk, exposure_type, details set above
-                    remediation = f"aws s3api delete-bucket-policy --bucket {resource_name}"
-
-            elif provider == "azure":
-                azure_conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-                if not azure_conn_str:
-                    return jsonify({"status": "error", "message": "Credentials missing"}), 400
-                
-                try:
-                    blob_service_client = BlobServiceClient.from_connection_string(azure_conn_str)
-                    container_client = blob_service_client.get_container_client(resource_name)
-                    props = container_client.get_container_properties()
-                    if props.public_access in ['blob', 'container']:
-                        is_public = True
-                        risk = "Critical"
-                        exposure_type = f"Public {props.public_access.capitalize()} Access"
-                        details = f"Container allows unauthenticated {props.public_access} access."
-                        remediation = f"az storage container set-permission --name {resource_name} --public-access off"
-                except AzureError as e:
-                    if 'ContainerNotFound' in str(e):
-                        return jsonify({"status": "error", "message": "Container not found."}), 404
-                    return jsonify({"status": "error", "message": "Azure Auth/Connection Error"}), 500
-
-            elif provider == "gcp":
-                gcp_creds_json = os.environ.get("GCP_CREDENTIALS_JSON")
-                try:
-                    if gcp_creds_json:
-                        creds_dict = json.loads(gcp_creds_json)
-                        credentials = service_account.Credentials.from_service_account_info(creds_dict)
-                        gcp_client = storage.Client(credentials=credentials)
-                    else:
-                        return jsonify({"status": "error", "message": "Credentials missing"}), 400
-
-                    bucket = gcp_client.bucket(resource_name)
-                    if not bucket.exists():
-                        return jsonify({"status": "error", "message": "Bucket not found."}), 404
-                        
-                    policy = bucket.get_iam_policy(requested_policy_version=3)
-                    for binding in policy.bindings:
-                        if binding.get('role') in ['roles/storage.objectViewer', 'roles/storage.legacyObjectReader', 'roles/storage.admin']:
-                            if 'allUsers' in binding.get('members', []) or 'allAuthenticatedUsers' in binding.get('members', []):
-                                is_public = True
-                                risk = "Critical"
-                                exposure_type = "Public IAM Binding"
-                                details = f"IAM policy grants {binding.get('role')} to allUsers."
-                                remediation = f"gcloud storage buckets remove-iam-policy-binding gs://{resource_name} --member=allUsers --role={binding.get('role')}"
-                                break
-                except GoogleAPIError:
-                    return jsonify({"status": "error", "message": "GCP Auth/Connection Error"}), 500
-                except json.JSONDecodeError:
-                    return jsonify({"status": "error", "message": "Credential Parse Error."}), 500
-
-            else:
-                return jsonify({"status": "error", "message": "Unsupported provider"}), 400
-
-            response_data = {
-                "provider": provider,
-                "resource": resource_name,
-                "isPublic": is_public,
-                "status": "FAIL" if is_public else "PASS",
-                "risk": risk,
-                "exposureType": exposure_type,
-                "details": details,
-                "remediation": remediation,
-                "confidence": confidence,
-                "scannedAt": scanned_at,
-                "scanDurationMs": round((time.perf_counter() - start_time) * 1000, 2)
-            }
-
-            # Cache the result
-            STORAGE_CACHE[cache_key] = {'ts': time.time(), 'data': response_data}
-
-            return jsonify(response_data)
-            
-        except Exception:
-            return jsonify({"status": "error", "message": "Internal Server Error"}), 500
+        except Exception as e:
+            return jsonify({
+                "public": False,
+                "error": str(e),
+                "demo": True
+            }), 200
 
     # ── NEW: Raw Config Scan Endpoint ──
     @app.route("/api/scan-config", methods=["POST"])

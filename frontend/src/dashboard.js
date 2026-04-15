@@ -777,42 +777,26 @@ async function checkS3Bucket() {
     resultDiv.innerHTML = `<span style="color:var(--color-info)">⏳ Checking ${provider.toUpperCase()}…</span>`;
 
     try {
-        const res = await fetch(`${API_BASE}/api/check-storage`, {
+        const res = await fetch(`${API_BASE}/api/storage/check`, {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ provider, resource: name })
+            body: JSON.stringify({ provider, bucket: name })
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
-        if (json.status === 'error') {
-            resultDiv.innerHTML = `<span style="color:var(--color-critical)">❌ ${escapeHtml(json.message)}</span>`;
-            showToast(json.message, 'error');
+        
+        if (json.public === true) {
+            resultDiv.innerHTML = `<span style="color:var(--color-critical);font-weight:bold;font-size:1.1rem;">🚨 Bucket is PUBLIC</span><br><small styl="color:var(--text-secondary)">${json.status}</small>`;
+            showToast("🚨 Bucket is PUBLIC", 'error');
+            addSocEvent('CRITICAL', `Storage: ${name} (${provider.toUpperCase()}) — EXPOSED`);
+        } else if (json.error) {
+            resultDiv.innerHTML = `<span style="color:var(--color-critical)">❌ Error: ${escapeHtml(json.error)}</span>`;
+            showToast(json.error, 'error');
         } else {
-            const isPublic = json.isPublic;
-            const statusColor = isPublic ? 'var(--color-critical)' : 'var(--color-low)';
-            let extra = '';
-            if (isPublic && json.remediation && json.remediation !== 'No action required.') {
-                extra = `<div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border-glass);">
-                    <div style="color:var(--text-secondary);font-size:0.83rem;margin-bottom:0.25rem;">Exposure</div>
-                    <div style="margin-bottom:0.5rem;"><strong>${escapeHtml(json.exposureType)}</strong></div>
-                    <div style="color:var(--text-secondary);font-size:0.83rem;margin-bottom:0.25rem;">Details</div>
-                    <div style="margin-bottom:0.5rem;">${escapeHtml(json.details)}</div>
-                    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,0.3);padding:0.45rem;border-radius:4px;font-family:monospace;font-size:0.82rem;">
-                        <code>${escapeHtml(json.remediation)}</code>
-                        <button class="btn btn-xs" onclick="copyCommand(this)">Copy</button>
-                    </div>
-                </div>`;
-            }
-            resultDiv.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <div><span class="badge badge-medium" style="margin-right:0.4rem;">${json.provider.toUpperCase()}</span><strong>Resource:</strong> <code>${escapeHtml(json.resource)}</code></div>
-                    <span class="badge ${json.risk==='Critical'?'badge-critical':json.risk==='Medium'?'badge-medium':'badge-low'}">Risk: ${json.risk} (${json.confidence}%)</span>
-                </div>
-                <div style="margin-top:0.4rem;font-size:1rem;color:${statusColor};font-weight:bold;">${isPublic?'🚨 PUBLICLY ACCESSIBLE':'✅ SECURE (Private)'}</div>
-                ${extra}`;
-            saveToHistory(json);
-            showToast(isPublic ? `⚠️ ${name} is PUBLICLY exposed` : `✅ ${name} is secure`, isPublic ? 'error' : 'success');
-            addSocEvent(isPublic ? 'CRITICAL' : 'INFO', `Storage: ${name} (${provider.toUpperCase()}) — ${isPublic ? 'EXPOSED' : 'Secure'}`);
+            resultDiv.innerHTML = `<span style="color:var(--color-low);font-weight:bold;font-size:1.1rem;">✅ Bucket is NOT public</span><br><small styl="color:var(--text-secondary)">${json.status}</small>`;
+            showToast("✅ Bucket is NOT public", 'success');
+            addSocEvent('INFO', `Storage: ${name} (${provider.toUpperCase()}) — SECURE`);
         }
+        
     } catch (e) {
         resultDiv.innerHTML = `<span style="color:var(--color-critical)">❌ Connection failed: ${e.message}</span>`;
         showToast('Storage check failed: ' + e.message, 'error');
