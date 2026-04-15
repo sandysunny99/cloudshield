@@ -80,13 +80,27 @@ def evaluate_cloud_config(config: dict, policy_name: str = "cloudshield") -> dic
     scanned_at = datetime.utcnow().isoformat() + "Z"
     normalized_config = _normalize_input(config)
 
+    # Prepare standard fallback
+    fallback_res = _evaluate_builtin(normalized_config, scanned_at)
+
     # Try OPA REST API first
     if _opa_available():
-        pass
-        # return _evaluate_via_opa_api(normalized_config, policy_name, scanned_at)
-    
-    # Fallback to built-in Python rule engine (Forced bypass)
-    return _evaluate_builtin(normalized_config, scanned_at)
+        opa_res = _evaluate_via_opa_api(normalized_config, policy_name, scanned_at)
+        
+        # Dual Validation: Combine results, preventing duplicate titles
+        combined_violations = []
+        seen = set()
+        for v in opa_res.get("violations", []) + fallback_res.get("violations", []):
+            if v["title"] not in seen:
+                seen.add(v["title"])
+                combined_violations.append(v)
+                
+        opa_res["violations"] = combined_violations
+        opa_res["summary"] = _build_summary(combined_violations)
+        opa_res["engine"] = "opa+builtin (dual-validation)"
+        return opa_res
+        
+    return fallback_res
 
 
 def _evaluate_via_opa_api(config: dict, policy_name: str, scanned_at: str) -> dict:
@@ -94,15 +108,24 @@ def _evaluate_via_opa_api(config: dict, policy_name: str, scanned_at: str) -> di
     try:
         url = f"{OPA_URL}/v1/data/{policy_name}/deny"
         payload = {"input": config}
-        resp = requests.post(url, json=payload, timeout=OPA_TIMEOUT)
+        resp = requests.post(url, json=payload, timeout=3)
         resp.raise_for_status()
         result = resp.json()
 
-        if "result" in result and "deny" in result["result"]:
-            raw_violations = result["result"]["deny"]
+        # Handle nested object extraction carefully
+        if "result" in result:
+            if isinstance(result["result"], dict):
+                raw_violations = result["result"].get("deny", [])
+            else:
+                raw_violations = result["result"]
         else:
-            raw_violations = result.get("result", [])
+            raw_violations = []
+            
         violations = _normalize_opa_violations(raw_violations, config)
+        
+        # Protect against OPA false-negatives failing silently
+        if not violations:
+            raise Exception("OPA returned empty violations array")
 
         return {
             "status":     "completed",
@@ -112,10 +135,10 @@ def _evaluate_via_opa_api(config: dict, policy_name: str, scanned_at: str) -> di
             "summary":    _build_summary(violations)
         }
     except Exception as e:
-        # Fallback to built-in rules if OPA API call fails
-        result = _evaluate_builtin(config, scanned_at)
-        result["_opa_error"] = str(e)
-        return result
+        # Failsafe directly drops into Builtin resolution
+        res = _evaluate_builtin(config, scanned_at)
+        res["_opa_error"] = str(e)
+        return res
 
 
 def _normalize_opa_violations(raw: list, config: dict) -> list:

@@ -155,13 +155,27 @@ def _no_key_analysis(findings: list, risk_score: dict) -> dict:
         if s in sev_counts:
             sev_counts[s] += 1
 
-    # Force category logic to guarantee no false SAFEs if findings exist
+    # Force category logic — guarantee no false SAFEs, but respect severity hierarchy
+    severity_rank = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+    
+    # Derive category from highest severity finding
+    max_severity_cat = "LOW"
+    for f in findings:
+        sev = f.get("severity", "LOW")
+        if severity_rank.get(sev, 0) > severity_rank.get(max_severity_cat, 0):
+            max_severity_cat = sev
+
+    # Count-based floor: many findings always escalate to at least HIGH
     if len(findings) >= 3:
-        cat = "HIGH"
+        count_cat = "HIGH"
     elif len(findings) >= 1:
-        cat = "MEDIUM"
+        count_cat = "MEDIUM"
     else:
-        cat = risk_score.get("category", "LOW")
+        count_cat = "LOW"
+
+    # Take the higher of the two
+    score_cat = risk_score.get("category", "LOW")
+    cat = max([max_severity_cat, count_cat, score_cat], key=lambda x: severity_rank.get(x, 0))
 
     score = risk_score.get("final_score", 0)
     total = risk_score.get("finding_count", len(findings))
