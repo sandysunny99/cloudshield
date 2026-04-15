@@ -324,19 +324,26 @@ async function runScan() {
     setButtonsDisabled(true);
     showPipelineRunning();
     clearLog();
-    addLog('Starting scan...', 'info');
+    addLog('Starting live agent scan...', 'info');
     try {
         const res = await fetch(`${API_BASE}/api/scan`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        if (json.status === 'error') throw new Error(json.message || 'Scan failed');
-        if (json.data) {
+        
+        let json;
+        try { json = await res.json(); } catch(e) {}
+        
+        if (!res.ok) {
+            throw new Error(json && json.message ? json.message : `HTTP ${res.status}`);
+        }
+        if (json && json.status === 'error') {
+            throw new Error(json.message || 'Scan failed');
+        }
+        if (json && json.data) {
             renderResults(json.data);
             showPipelineDone();
-            showToast('Scan completed successfully', 'success');
-            addSocEvent('INFO', 'Full pipeline scan completed.');
+            showToast('Scan completed successfully with Live Agent data', 'success');
+            addSocEvent('INFO', 'Full pipeline scan completed using live data.');
         } else {
             showToast('Scan returned no data — backend may be warming up', 'warning');
         }

@@ -446,8 +446,49 @@ def create_app():
             trivy_output = body.get("trivy_output")
 
             if not config and not image and not trivy_output:
-                config = os.path.join(SAMPLE_DIR, "bad_aws_config.json")
-                trivy_output = os.path.join(SAMPLE_DIR, "sample_trivy_output.json")
+                now = time.time()
+                active_agent = None
+                for a_id, entry in AGENT_CACHE.items():
+                    if now - entry["timestamp"] <= 180:
+                        active_agent = entry["data"]
+                        break
+                
+                if active_agent:
+                    findings = []
+                    for vuln in active_agent.get("vulnerabilities", []):
+                        findings.append({
+                            "id": vuln.get("id"),
+                            "type": "Vulnerability",
+                            "severity": vuln.get("severity"),
+                            "title": vuln.get("title"),
+                            "description": f"Found in {vuln.get('pkg')}",
+                            "source": "trivy"
+                        })
+                    
+                    risk = compute_risk_scores(findings)
+                    remediations = generate_remediations(findings)
+                    enriched = map_compliance(findings)
+                    comp_summary = get_compliance_summary(enriched)
+                    
+                    result = {
+                        "timestamp": datetime.now().isoformat(),
+                        "findings": enriched,
+                        "risk": risk,
+                        "remediations": remediations,
+                        "compliance": comp_summary,
+                        "alert_summary": {
+                            "total": len(findings),
+                            "critical": sum(1 for a in findings if a.get("severity") == "CRITICAL"),
+                            "high": sum(1 for a in findings if a.get("severity") == "HIGH"),
+                            "medium": sum(1 for a in findings if a.get("severity") == "MEDIUM"),
+                            "low": sum(1 for a in findings if a.get("severity") == "LOW")
+                        }
+                    }
+                    _save_cache(result)
+                    add_soc_event("INFO", "Full pipeline scan completed using Live Agent data.")
+                    return jsonify({"status": "completed", "data": result})
+                else:
+                    return jsonify({"status": "error", "message": "No active agents connected"}), 400
 
             result = run_pipeline(image=image, config=config, trivy_output=trivy_output)
             _save_cache(result)

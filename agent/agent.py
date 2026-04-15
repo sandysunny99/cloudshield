@@ -23,63 +23,84 @@ TRIVY_INTERVAL = 1200 # 20 minutes
 
 # Global State
 last_trivy_scan_time = 0
-current_cves = {"critical": 0, "high": 0}
+cached_vulns = []
 
 def run_trivy_scan(cpu_percent):
-    global current_cves
+    global cached_vulns
     if cpu_percent > 90:
         print("[!] CPU > 90%. Skipping heavy Trivy scan to prevent disruption.")
         return
         
-    print("[*] Running background Trivy filesystem scan (HIGH/CRITICAL only)...")
+    scan_target = os.path.expanduser("~")
+    print(f"[*] Running background Trivy filesystem scan on {scan_target} (HIGH/CRITICAL only)...")
     try:
-        # Limit to HIGH,CRITICAL to save compute 
+        # Run Trivy safely
         result = subprocess.run(
-            ["trivy", "fs", "/", "--format", "json", "--quiet", "--scanners", "vuln", "--severity", "HIGH,CRITICAL"],
+            ["trivy", "fs", scan_target, "--severity", "HIGH,CRITICAL", "--format", "json", "--quiet", "--scanners", "vuln"],
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=120
         )
         if result.returncode == 0:
             data = json.loads(result.stdout)
-            cves = {"critical": 0, "high": 0}
+            vulns = []
             for result_block in data.get("Results", []):
                 for vuln in result_block.get("Vulnerabilities", []):
-                    sev = vuln.get("Severity", "UNKNOWN").lower()
-                    if sev in cves:
-                        cves[sev] += 1
-            current_cves = cves
-            print(f"[+] Trivy scan complete. Found: {current_cves}")
+                    vulns.append({
+                        "id": vuln.get("VulnerabilityID", "N/A"),
+                        "pkg": vuln.get("PkgName", "N/A"),
+                        "severity": vuln.get("Severity", "UNKNOWN").upper(),
+                        "title": vuln.get("Title", "Vulnerability")
+                    })
+                    if len(vulns) >= 50:
+                        break
+                if len(vulns) >= 50:
+                    break
+            cached_vulns = vulns
+            print(f"[+] Trivy scan complete. Found {len(cached_vulns)} caching for payload.")
         else:
             print("[-] Trivy scan failed or returned non-zero code.")
     except Exception as e:
         print(f"[-] Trivy execution error: {str(e)}")
 
 def get_system_telemetry():
-    global last_trivy_scan_time, current_cves
+    global last_trivy_scan_time, cached_vulns
     
     hostname = socket.gethostname()
-    cpu_percent = psutil.cpu_percent(interval=1)
-    ram = psutil.virtual_memory()
+    
+    try:
+        cpu_percent = psutil.cpu_percent(interval=1)
+    except:
+        cpu_percent = 0
+
+    try:
+        ram = psutil.virtual_memory()
+        ram_percent = ram.percent
+    except:
+        ram_percent = 0
+        
     os_info = f"{psutil.os.name} {psutil.os.uname().release}" if hasattr(psutil.os, 'uname') else "Windows/Unknown"
 
     processes = []
-    for proc in sorted(psutil.process_iter(['pid', 'name', 'cpu_percent']), key=lambda p: p.info['cpu_percent'] or 0, reverse=True)[:10]:
-        processes.append({"pid": proc.info['pid'], "name": proc.info['name'], "cpu": proc.info['cpu_percent']})
+    try:
+        for proc in sorted(psutil.process_iter(['pid', 'name', 'cpu_percent']), key=lambda p: p.info['cpu_percent'] or 0, reverse=True)[:10]:
+            processes.append({"pid": proc.info['pid'], "name": proc.info['name'], "cpu": proc.info['cpu_percent']})
+    except:
+        pass
 
     open_ports = []
     try:
-        conns = psutil.net_connections(kind='inet')
-        for conn in conns:
+        connections = psutil.net_connections(kind='inet')
+        for conn in connections:
             if conn.status == 'LISTEN':
                 open_ports.append({"port": conn.laddr.port, "ip": conn.laddr.ip})
-    except psutil.AccessDenied:
-        pass 
+    except:
+        pass
         
     unique_ports = {p['port']: p for p in open_ports}.values()
 
     # Background Trivy Check
-    if time.time() - last_trivy_scan_time > TRIVY_INTERVAL:
+    if time.time() - last_trivy_scan_time > TRIVY_INTERVAL or last_trivy_scan_time == 0:
         last_trivy_scan_time = time.time()
         threading.Thread(target=run_trivy_scan, args=(cpu_percent,), daemon=True).start()
 
@@ -94,10 +115,10 @@ def get_system_telemetry():
         "hostname": hostname,
         "os": os_info,
         "cpu_percent": cpu_percent,
-        "ram_percent": ram.percent,
+        "ram_percent": ram_percent,
         "top_processes": processes,
         "open_ports": list(unique_ports)[:20],
-        "cves": current_cves
+        "vulnerabilities": cached_vulns
     }
     
     return payload, ts, nonce, cpu_percent
