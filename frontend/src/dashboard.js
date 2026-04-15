@@ -1,6 +1,6 @@
 /* CloudShield Dashboard v3 — SaaS Production */
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_BASE = 'https://cloudshield-tya3.onrender.com';
 
 // ── Severity / Source colours ──
 const SEVERITY_COLORS = { CRITICAL:'#ef4444', HIGH:'#f97316', MEDIUM:'#eab308', LOW:'#22c55e' };
@@ -1198,18 +1198,23 @@ window.runContainerScan = async function() {
             ? `<div style="background:rgba(234,179,8,0.15);border:1px solid var(--color-medium);border-radius:8px;padding:0.6rem 1rem;font-size:0.82rem;margin-bottom:1rem;">⚠️ <strong>Demo Mode:</strong> Trivy not installed on server — showing representative CVE data for demonstration purposes.</div>`
             : '';
 
-        renderContainerScanResult(data, resultEl, demoBanner);
-        showToast(`Container scan complete: ${data.summary?.total || 0} vulnerabilities`, 
-                   (data.summary?.critical || 0) > 0 ? 'error' : 'success');
-        addSocEvent('INFO', `Container scan '${image}': ${data.summary?.total || 0} vulns (${data.summary?.critical || 0} critical).`);
+        const findings = data.vulnerabilities || [];
+        if (!findings || findings.length === 0) {
+            resultEl.innerHTML = `<div class="container-scan-error">✅ No vulnerabilities found</div>`;
+        } else {
+            renderContainerScanResult(data, resultEl, demoBanner);
+            showToast(`Container scan complete: ${data.summary?.total || 0} vulnerabilities`, 
+                       (data.summary?.critical || 0) > 0 ? 'error' : 'success');
+            addSocEvent('INFO', `Container scan '${image}': ${data.summary?.total || 0} vulns (${data.summary?.critical || 0} critical).`);
 
-        // Phase 7: auto-trigger AI analysis after scan
-        const findings = (data.vulnerabilities || []).map(v => ({
-            id: v.id, severity: v.severity, source: 'trivy',
-            title: v.title, description: v.description || ''
-        }));
-        if (findings.length > 0) {
-            runAIAnalysis(findings);
+            // Phase 7: auto-trigger AI analysis after scan
+            const findingsList = findings.map(v => ({
+                id: v.id, severity: v.severity, source: 'trivy',
+                title: v.title, description: v.description || ''
+            }));
+            
+            console.log("Findings sent to AI:", findingsList);
+            runAIAnalysis(findingsList);
         }
 
     } catch(e) {

@@ -896,6 +896,7 @@ def create_app():
         POST body: { "image": "nginx:latest" }
         Returns real CVE findings from Trivy.
         """
+        print("DEPLOY CHECK: NEW VERSION ACTIVE", flush=True)
         if request.method == "OPTIONS":
             return jsonify({}), 200
         body = request.get_json(silent=True) or {}

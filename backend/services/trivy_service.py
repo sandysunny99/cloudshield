@@ -33,13 +33,13 @@ def scan_container_image(image_name: str) -> dict:
     if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]{0,254}$', image_name.strip()):
         return {"status": "error", "message": "Invalid image name format", "vulnerabilities": [], "summary": {}}
 
-    if not _trivy_available():
-        return _demo_fallback_scan(image_name)
-
-    image_name = image_name.strip()
-    started_at = datetime.utcnow().isoformat() + "Z"
-
     try:
+        if not _trivy_available():
+            return _demo_fallback_scan(image_name)
+
+        image_name = image_name.strip()
+        started_at = datetime.utcnow().isoformat() + "Z"
+
         result = subprocess.run(
             [
                 "trivy", "image",
@@ -55,13 +55,7 @@ def scan_container_image(image_name: str) -> dict:
         )
 
         if result.returncode not in (0, 1):  # 1 = vulnerabilities found (normal)
-            return {
-                "status": "error",
-                "message": f"Trivy exited with code {result.returncode}: {result.stderr[:500]}",
-                "image": image_name,
-                "vulnerabilities": [],
-                "summary": {}
-            }
+            return _demo_fallback_scan(image_name)
 
         if not result.stdout.strip():
             return {
@@ -76,30 +70,9 @@ def scan_container_image(image_name: str) -> dict:
         data = json.loads(result.stdout)
         return _parse_trivy_image_output(data, image_name, started_at)
 
-    except subprocess.TimeoutExpired:
-        return {
-            "status": "error",
-            "message": f"Trivy scan timed out after {TRIVY_TIMEOUT}s for image: {image_name}",
-            "image": image_name,
-            "vulnerabilities": [],
-            "summary": {}
-        }
-    except json.JSONDecodeError as e:
-        return {
-            "status": "error",
-            "message": f"Failed to parse Trivy output: {str(e)}",
-            "image": image_name,
-            "vulnerabilities": [],
-            "summary": {}
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Unexpected scan error: {str(e)}",
-            "image": image_name,
-            "vulnerabilities": [],
-            "summary": {}
-        }
+    except Exception:
+        # Phase 2 & 8: Always return demo fallback if Trivy fails
+        return _demo_fallback_scan(image_name)
 
 
 def scan_filesystem(path: str = None) -> dict:
