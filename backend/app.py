@@ -955,7 +955,7 @@ def create_app():
                           f"Cloud scan: {result['summary']['total']} violations "
                           f"({result['summary']['CRITICAL']} critical).")
 
-        return jsonify({"status": result.get("status", "error"), "data": result})
+        return jsonify({"violations": result.get("violations", [])})
 
     @app.route("/api/scan/aws", methods=["POST", "OPTIONS"])
     @limiter.limit("5 per minute")
