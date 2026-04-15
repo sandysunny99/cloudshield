@@ -825,6 +825,50 @@ def create_app():
             add_soc_event("WARNING", f"/api/scan-config error: {str(exc)}")
             return jsonify({"status": "error", "message": "Internal config scan error."}), 500
 
+    @app.route("/api/download-agent", methods=["GET"])
+    def api_download_agent():
+        """Serve the packaged CloudShield agent executable."""
+        from flask import send_file, redirect
+        import pathlib
+
+        # Look for precompiled exe first (built via PyInstaller)
+        agent_exe = os.path.join(os.path.dirname(__file__), "dist", "cloudshield-agent.exe")
+        if os.path.exists(agent_exe):
+            return send_file(
+                agent_exe,
+                mimetype="application/octet-stream",
+                as_attachment=True,
+                download_name="cloudshield-agent.exe"
+            )
+
+        # If not compiled yet, serve the raw Python agent script
+        agent_py = os.path.join(os.path.dirname(__file__), "..", "agent", "agent.py")
+        agent_py = str(pathlib.Path(agent_py).resolve())
+        if os.path.exists(agent_py):
+            return send_file(
+                agent_py,
+                mimetype="text/x-python",
+                as_attachment=True,
+                download_name="cloudshield-agent.py"
+            )
+
+        return jsonify({"status": "error", "message": "Agent binary not available yet"}), 404
+
+    @app.route("/api/agent-keys", methods=["GET"])
+    def api_agent_keys():
+        """Return a demo API key for display in the Deploy Agent modal."""
+        # In production, this would be per-user auth. For now return the env key.
+        agent_keys_env = os.environ.get("AGENT_KEYS", "default-agent-key-123")
+        primary_key = agent_keys_env.split(',')[0].strip()
+        backend_url = os.environ.get("CLOUDSHIELD_API_URL", "https://cloudshield-tya3.onrender.com")
+        download_url = f"{backend_url}/api/download-agent"
+        return jsonify({
+            "status": "success",
+            "api_key": primary_key,
+            "download_url": download_url,
+            "backend_url": backend_url
+        })
+
     return app
 
 

@@ -9,13 +9,42 @@ import psutil
 import os
 import hmac
 import hashlib
+import argparse
+import shutil
+import sys
 from urllib.parse import urlparse
+
+# CLI Args & API Key Input
+def parse_args():
+    parser = argparse.ArgumentParser(description="CloudShield EDR Agent")
+    parser.add_argument("--key", help="CloudShield Dashboard API Key", default=None)
+    return parser.parse_args()
+
+args = parse_args()
+api_key = args.key
+
+if not api_key:
+    try:
+        api_key = input("Enter CloudShield API Key: ").strip()
+    except (EOFError, OSError):
+        # Fallback if running with --noconsole
+        try:
+            import tkinter as tk
+            from tkinter import simpledialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            api_key = simpledialog.askstring("CloudShield Agent", "Enter CloudShield API Key:", parent=root)
+            if not api_key:
+                sys.exit(0)
+        except ImportError:
+            sys.exit(1)
 
 # Configuration
 API_URL = os.environ.get("CLOUDSHIELD_API_URL", "https://cloudshield-tya3.onrender.com/api/agent-scan")
 parsed_url = urlparse(API_URL)
 API_PATH = parsed_url.path
-AGENT_KEY = os.environ.get("AGENT_KEY", "default-agent-key-123")
+AGENT_KEY = api_key
 
 def get_persistent_agent_id():
     try:
@@ -35,6 +64,12 @@ cached_vulns = []
 
 def run_trivy_scan(cpu_percent):
     global cached_vulns
+    
+    if not shutil.which("trivy"):
+        print("[-] Trivy not installed. Skipping vulnerability scan.")
+        cached_vulns = []
+        return
+        
     if cpu_percent > 90:
         print("[!] CPU > 90%. Skipping heavy Trivy scan to prevent disruption.")
         return
@@ -149,7 +184,8 @@ def ship_telemetry():
                 "Content-Type": "application/json",
                 "x-agent-signature": signature,
                 "x-agent-timestamp": ts,
-                "x-agent-nonce": nonce
+                "x-agent-nonce": nonce,
+                "x-agent-key": AGENT_KEY # Sent purely for SaaS multitenant identification mapping (even though it's signed)
             }
             
             for attempt in range(3):
@@ -157,6 +193,9 @@ def ship_telemetry():
                     res = requests.post(API_URL, data=payload_json, headers=headers, timeout=10)
                     if res.status_code == 200:
                         break
+                    elif res.status_code == 403:
+                        print("[-] 403 Forbidden: Invalid API Key. Agent terminated.")
+                        sys.exit(1)
                 except Exception as e:
                     print(f"[-] Network error: {str(e)}")
                 time.sleep(2)

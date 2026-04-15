@@ -25,4 +25,10 @@ reports/*.json
 reports/*.html
 !reports/.gitkeep
 node_modules/
-dist/
+agent/dist/
+agent/build/
+agent/*.spec
+frontend/dist/
+!backend/dist/
+!backend/dist/*.exe
+!backend/dist/*.py

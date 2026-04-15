@@ -1063,3 +1063,98 @@ window.toggleHistory     = toggleHistory;
 window.exportStorageReport = exportStorageReport;
 window.fetchSecurityMetrics = window.fetchSecurityMetrics;
 window.reloadScan        = reloadScan;
+
+// ── Deploy Agent Modal ──
+let _deployApiKey = '';
+let _deployDownloadUrl = '';
+
+window.openDeployModal = async function() {
+    const modal = document.getElementById('deploy-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+
+    // Fetch API key info from backend
+    try {
+        const res = await fetch(`${API_BASE}/api/agent-keys`);
+        const data = await res.json();
+        if (data.status === 'success') {
+            _deployApiKey = data.api_key || 'N/A';
+            _deployDownloadUrl = data.download_url || `${API_BASE}/api/download-agent`;
+        } else {
+            _deployApiKey = 'default-agent-key-123';
+            _deployDownloadUrl = `${API_BASE}/api/download-agent`;
+        }
+    } catch {
+        _deployApiKey = 'default-agent-key-123';
+        _deployDownloadUrl = `${API_BASE}/api/download-agent`;
+    }
+
+    // Populate UI
+    const keyEl = document.getElementById('deploy-api-key');
+    if (keyEl) keyEl.textContent = _deployApiKey;
+
+    const cmdEl = document.getElementById('deploy-cli-cmd');
+    if (cmdEl) cmdEl.textContent = `.\\cloudshield-agent.exe --key ${_deployApiKey}`;
+
+    const oneEl = document.getElementById('deploy-oneliner');
+    if (oneEl) oneEl.textContent =
+        `Invoke-WebRequest "${_deployDownloadUrl}" -OutFile cloudshield-agent.exe; .\\cloudshield-agent.exe --key ${_deployApiKey}`;
+};
+
+window.closeDeployModal = function() {
+    const modal = document.getElementById('deploy-modal');
+    if (modal) modal.classList.add('hidden');
+    document.body.style.overflow = '';
+};
+
+window.closeDeployModalOutside = function(e) {
+    if (e.target.id === 'deploy-modal') window.closeDeployModal();
+};
+
+window.downloadAgent = function() {
+    const url = _deployDownloadUrl || `${API_BASE}/api/download-agent`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'cloudshield-agent.exe';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('Downloading CloudShield Agent...', 'success');
+    addSocEvent('INFO', 'Agent download initiated from Deploy Agent modal.');
+};
+
+window.copyApiKey = function() {
+    if (!_deployApiKey) return;
+    navigator.clipboard.writeText(_deployApiKey).then(() => {
+        showToast('API Key copied to clipboard!', 'success');
+    }).catch(() => {
+        showToast('Copy failed — please copy manually.', 'warning');
+    });
+};
+
+window.copyCliCmd = function() {
+    const el = document.getElementById('deploy-cli-cmd');
+    if (!el) return;
+    navigator.clipboard.writeText(el.textContent).then(() => {
+        showToast('CLI command copied!', 'success');
+    }).catch(() => showToast('Copy failed.', 'warning'));
+};
+
+window.copyOneliner = function() {
+    const el = document.getElementById('deploy-oneliner');
+    if (!el) return;
+    navigator.clipboard.writeText(el.textContent).then(() => {
+        showToast('One-liner copied!', 'success');
+    }).catch(() => showToast('Copy failed.', 'warning'));
+};
+
+// Keyboard: Esc closes modal
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const modal = document.getElementById('deploy-modal');
+        if (modal && !modal.classList.contains('hidden')) {
+            window.closeDeployModal();
+        }
+    }
+});

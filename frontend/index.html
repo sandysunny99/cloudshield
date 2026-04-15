@@ -38,6 +38,9 @@
                 <button id="btn-export-report" class="btn btn-outline" onclick="exportReport()" aria-label="Download full security report JSON">
                     <span class="btn-icon">📥</span> Export Report
                 </button>
+                <button id="btn-deploy-agent" class="btn btn-deploy" onclick="openDeployModal()" aria-label="Deploy CloudShield Agent to an endpoint">
+                    <span class="btn-icon">🚀</span> Deploy Agent
+                </button>
             </div>
         </div>
     </header>
@@ -450,6 +453,77 @@ Example JSON:
     </footer>
 
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- ── Deploy Agent Modal ── -->
+    <div id="deploy-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="deploy-modal-title" onclick="closeDeployModalOutside(event)">
+        <div class="modal-box deploy-modal-box">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <span class="modal-icon">🚀</span>
+                    <div>
+                        <h2 id="deploy-modal-title" class="modal-title">Deploy CloudShield Agent</h2>
+                        <p class="modal-subtitle">Install on any endpoint to stream live telemetry to this dashboard</p>
+                    </div>
+                </div>
+                <button class="modal-close-btn" onclick="closeDeployModal()" aria-label="Close modal">✕</button>
+            </div>
+
+            <div class="deploy-steps">
+                <!-- Step 1: Download -->
+                <div class="deploy-step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3 class="step-title">Download the Agent</h3>
+                        <p class="step-desc">A lightweight executable — no Python installation required on the target machine.</p>
+                        <div class="deploy-download-row">
+                            <button id="btn-download-agent" class="btn btn-primary btn-lg" onclick="downloadAgent()">
+                                <span class="btn-icon">⬇️</span> Download cloudshield-agent.exe
+                            </button>
+                            <span id="deploy-trivy-note" class="deploy-note">💡 Install <a href="https://github.com/aquasecurity/trivy/releases" target="_blank" rel="noopener" class="deploy-link">Trivy</a> for vulnerability scanning (optional)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: API Key -->
+                <div class="deploy-step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3 class="step-title">Your Dashboard API Key</h3>
+                        <p class="step-desc">This key links the agent to your CloudShield dashboard. Keep it private.</p>
+                        <div class="api-key-box">
+                            <code id="deploy-api-key" class="api-key-text">Loading...</code>
+                            <button class="btn btn-sm btn-copy" onclick="copyApiKey()" title="Copy API Key">📋 Copy</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Run -->
+                <div class="deploy-step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3 class="step-title">Run on the Endpoint</h3>
+                        <p class="step-desc">Double-click the exe and enter your API key when prompted, or run via PowerShell:</p>
+                        <div class="cli-box">
+                            <code id="deploy-cli-cmd" class="cli-code">Loading...</code>
+                            <button class="btn btn-sm btn-copy" onclick="copyCliCmd()" title="Copy command">📋 Copy</button>
+                        </div>
+                        <p class="step-desc" style="margin-top:0.6rem;">Or one-line install &amp; run:</p>
+                        <div class="cli-box">
+                            <code id="deploy-oneliner" class="cli-code">Loading...</code>
+                            <button class="btn btn-sm btn-copy" onclick="copyOneliner()" title="Copy one-liner">📋 Copy</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status -->
+                <div class="deploy-status-row">
+                    <span class="deploy-status-indicator"></span>
+                    <span>Once running, the agent appears in <strong>Endpoints</strong> within 30 seconds</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="/src/dashboard.js"></script>
 </body>
 </html>
