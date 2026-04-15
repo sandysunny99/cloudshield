@@ -379,7 +379,6 @@ async function runDemo() {
         const res = await fetch(`${API_BASE}/api/demo`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
         if (json.status === 'error') throw new Error(json.message || 'Demo failed');
         if (json.data) {
@@ -783,18 +782,22 @@ async function checkS3Bucket() {
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
-        
-        if (json.public === true) {
-            resultDiv.innerHTML = `<span style="color:var(--color-critical);font-weight:bold;font-size:1.1rem;">🚨 Bucket is PUBLIC</span><br><small styl="color:var(--text-secondary)">${json.status}</small>`;
-            showToast("🚨 Bucket is PUBLIC", 'error');
-            addSocEvent('CRITICAL', `Storage: ${name} (${provider.toUpperCase()}) — EXPOSED`);
+                console.log('Storage API response:', json);
+                const providerLabel = (json.provider || provider).toUpperCase();
+                const bucketLabel   = escapeHtml(json.bucket || name);
+                const demoTag = json.demo ? '<span style="font-size:0.75rem;padding:2px 8px;border-radius:20px;background:rgba(255,200,0,0.15);color:#FFD700;">⚡ Demo</span>' : '';
+                if (json.public === true) {
+            resultDiv.innerHTML = `<div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;"><span style="background:rgba(255,60,60,0.15);color:var(--color-critical);padding:3px 10px;border-radius:20px;font-size:0.8rem;font-weight:600;">${providerLabel}</span><code style="color:var(--text-primary);">${bucketLabel}</code>${demoTag}</div><div style="font-size:1.15rem;font-weight:700;color:var(--color-critical);">🔴 PUBLIC</div><div style="color:var(--text-secondary);font-size:0.85rem;margin-top:0.25rem;">${escapeHtml(json.status||'Publicly accessible')}</div>`;
+            showToast('🚨 Bucket is PUBLIC', 'error');
+            addSocEvent('CRITICAL', `Storage: ${name} (${providerLabel}) — EXPOSED`);
+            runAIAnalysis([{ title: `Public Storage Bucket: ${name}`, severity: 'HIGH', description: `${providerLabel} bucket "${name}" is publicly accessible.`, type: 'CloudMisconfiguration', id: 'CS-STORAGE-PUBLIC' }]);
         } else if (json.error) {
             resultDiv.innerHTML = `<span style="color:var(--color-critical)">❌ Error: ${escapeHtml(json.error)}</span>`;
             showToast(json.error, 'error');
         } else {
-            resultDiv.innerHTML = `<span style="color:var(--color-low);font-weight:bold;font-size:1.1rem;">✅ Bucket is NOT public</span><br><small styl="color:var(--text-secondary)">${json.status}</small>`;
-            showToast("✅ Bucket is NOT public", 'success');
-            addSocEvent('INFO', `Storage: ${name} (${provider.toUpperCase()}) — SECURE`);
+            resultDiv.innerHTML = `<div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;"><span style="background:rgba(40,220,120,0.15);color:var(--color-low);padding:3px 10px;border-radius:20px;font-size:0.8rem;font-weight:600;">${providerLabel}</span><code style="color:var(--text-primary);">${bucketLabel}</code>${demoTag}</div><div style="font-size:1.15rem;font-weight:700;color:var(--color-low);">🟢 PRIVATE</div><div style="color:var(--text-secondary);font-size:0.85rem;margin-top:0.25rem;">${escapeHtml(json.status||'Not publicly accessible')}</div>`;
+            showToast('✅ Bucket is NOT public', 'success');
+            addSocEvent('INFO', `Storage: ${name} (${providerLabel}) — SECURE`);
         }
         
     } catch (e) {

@@ -536,21 +536,38 @@ def create_app():
             add_soc_event("WARNING", f"/api/demo server error: {str(exc)}")
             return jsonify({"status": "error", "message": "Internal demo error. Check server logs."}), 500
 
-    @app.route("/api/storage/check", methods=["POST"])
+    @app.route("/api/storage/check", methods=["POST", "OPTIONS"])
     def check_storage():
+        print("STORAGE CHECK LIVE VERSION", flush=True)
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
         try:
-            data = request.json
-            provider = data.get("provider")
-            bucket = data.get("bucket")
+            data = request.get_json(silent=True) or {}
+            provider = (data.get("provider") or "aws").strip().lower()
+            bucket   = (data.get("bucket") or "").strip()
+
+            print(f"[STORAGE CHECK] provider={provider} bucket={bucket}", flush=True)
+
+            if not bucket:
+                return jsonify({"public": False, "error": "Missing bucket name", "provider": provider, "bucket": bucket}), 200
 
             result = check_storage_public(provider, bucket)
 
-            return jsonify(result)
+            # Ensure these keys are always present for frontend + AI pipeline
+            result.setdefault("provider", provider)
+            result.setdefault("bucket", bucket)
+            result.setdefault("public", False)
+            result.setdefault("status", "Unknown")
+
+            print(f"[STORAGE CHECK] result={result}", flush=True)
+            return jsonify(result), 200
 
         except Exception as e:
+            print(f"[STORAGE CHECK] UNHANDLED ERROR: {e}", flush=True)
             return jsonify({
                 "public": False,
                 "error": str(e),
+                "status": "Error (handled safely)",
                 "demo": True
             }), 200
 
