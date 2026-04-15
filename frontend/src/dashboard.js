@@ -1186,16 +1186,32 @@ window.runContainerScan = async function() {
         const json = await res.json();
         const data = json.data || {};
 
+        // Phase 3: show demo-mode notice instead of raw error
         if (data.status === 'error') {
-            resultEl.innerHTML = `<div class="container-scan-error">❌ ${data.message}</div>`;
-            showToast(data.message, 'error');
+            resultEl.innerHTML = `<div class="container-scan-error">⚠️ Using demo scan results — ${data.message || 'scanner unavailable'}</div>`;
+            showToast('Using demo scan results', 'warning');
             return;
         }
 
-        renderContainerScanResult(data, resultEl);
+        // Show demo banner if running in fallback mode
+        const demoBanner = data._demo_mode
+            ? `<div style="background:rgba(234,179,8,0.15);border:1px solid var(--color-medium);border-radius:8px;padding:0.6rem 1rem;font-size:0.82rem;margin-bottom:1rem;">⚠️ <strong>Demo Mode:</strong> Trivy not installed on server — showing representative CVE data for demonstration purposes.</div>`
+            : '';
+
+        renderContainerScanResult(data, resultEl, demoBanner);
         showToast(`Container scan complete: ${data.summary?.total || 0} vulnerabilities`, 
                    (data.summary?.critical || 0) > 0 ? 'error' : 'success');
         addSocEvent('INFO', `Container scan '${image}': ${data.summary?.total || 0} vulns (${data.summary?.critical || 0} critical).`);
+
+        // Phase 7: auto-trigger AI analysis after scan
+        const findings = (data.vulnerabilities || []).map(v => ({
+            id: v.id, severity: v.severity, source: 'trivy',
+            title: v.title, description: v.description || ''
+        }));
+        if (findings.length > 0) {
+            runAIAnalysis(findings);
+        }
+
     } catch(e) {
         resultEl.innerHTML = `<div class="container-scan-error">❌ Scan failed: ${e.message}</div>`;
         showToast('Container scan failed: ' + e.message, 'error');
@@ -1205,7 +1221,7 @@ window.runContainerScan = async function() {
     }
 };
 
-function renderContainerScanResult(data, container) {
+function renderContainerScanResult(data, container, extraHtml = '') {
     const s = data.summary || {};
     const vulns = data.vulnerabilities || [];
 
@@ -1225,6 +1241,7 @@ function renderContainerScanResult(data, container) {
         </tr>`).join('');
 
     container.innerHTML = `
+        ${extraHtml}
         <div class="container-scan-summary">
             <div class="cs-meta">
                 <strong>${data.artifact_name || data.scan_target}</strong>
@@ -1335,6 +1352,33 @@ function renderCompliancePanel(compliance) {
             </div>` : ''}
         </div>`;
 }
+
+// ── AI Analysis Trigger ───────────────────────────────────────────
+// Phase 6: Call /api/analyze/risk with dynamic findings list
+window.runAIAnalysis = async function(findingsOverride) {
+    const container = document.getElementById('ai-analysis-container');
+    if (container) {
+        container.innerHTML = '<div style="padding:1.5rem;text-align:center;"><span class="spinner"></span> Generating AI risk analysis...</div>';
+    }
+    try {
+        const res = await fetch(`${API_BASE}/api/analyze/risk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                findings: findingsOverride || [],
+                risk_score: { final_score: 0, category: 'LOW', finding_count: (findingsOverride || []).length }
+            })
+        });
+        const json = await res.json();
+        const analysis = json.data || json;
+        if (analysis && analysis.overall_risk) {
+            renderAiAnalysis(analysis);
+            addSocEvent('INFO', `AI risk analysis complete: ${analysis.overall_risk} risk.`);
+        }
+    } catch(e) {
+        if (container) container.innerHTML = '<div style="padding:1rem;color:var(--color-medium);">AI analysis unavailable — backend unreachable.</div>';
+    }
+};
 
 // ── Hook renderers into existing renderResults ────────────────────
 const _origRenderResults = window.renderResults || function(){};
