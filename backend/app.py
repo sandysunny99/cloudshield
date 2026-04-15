@@ -910,6 +910,8 @@ def create_app():
 
         return jsonify({"status": result.get("status", "error"), "data": result})
 
+    from services.aws_service import generate_live_cloud_config
+
     @app.route("/api/scan/cloud", methods=["POST", "OPTIONS"])
     @limiter.limit("20 per minute")
     def api_scan_cloud():
@@ -920,9 +922,15 @@ def create_app():
         """
         if request.method == "OPTIONS":
             return jsonify({}), 200
+        
         body = request.get_json(silent=True)
+        # Auto-fetch AWS if body is empty or not provided
         if not body or not isinstance(body, dict):
-            return jsonify({"status": "error", "message": "Valid JSON cloud config required"}), 400
+            live_config = generate_live_cloud_config()
+            if live_config:
+                body = live_config
+            else:
+                return jsonify({"status": "error", "message": "Valid JSON cloud config required, and no live AWS credentials found."}), 400
 
         # Limit payload size
         if len(json.dumps(body)) > 256 * 1024:
@@ -940,6 +948,31 @@ def create_app():
                           f"({result['summary']['CRITICAL']} critical).")
 
         return jsonify({"status": result.get("status", "error"), "data": result})
+
+    @app.route("/api/scan/aws", methods=["POST", "OPTIONS"])
+    @limiter.limit("5 per minute")
+    def api_scan_aws():
+        """Explicitly trigger a live AWS scan using local credentials."""
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+            
+        live_config = generate_live_cloud_config()
+        if not live_config:
+            return jsonify({"status": "error", "message": "No valid AWS credentials found locally."}), 400
+            
+        result = evaluate_cloud_config(live_config)
+        
+        if result.get("status") == "completed":
+            try:
+                db_service.save_cloud_scan("aws", result)
+            except Exception:
+                pass
+            add_soc_event("WARNING" if result["summary"]["CRITICAL"] > 0 else "INFO",
+                          f"Live AWS scan: {result['summary']['total']} violations "
+                          f"({result['summary']['CRITICAL']} critical).")
+
+        return jsonify({"status": result.get("status", "error"), "data": result})
+
 
     @app.route("/api/analyze/risk", methods=["POST", "OPTIONS"])
     @limiter.limit("10 per minute")
@@ -1072,6 +1105,69 @@ def create_app():
     def api_db_health():
         """Database connection health check."""
         return jsonify(db_service.health_check())
+
+    # ══════════════════════════════════════════════════════════════════
+    #  EXTENDED SERVICES — Phase 9 (Agent telemetry, Alerts, Scheduler)
+    # ══════════════════════════════════════════════════════════════════
+
+    from services import alert_service
+    from services import scheduler_service
+
+    # Start the continuous scanner
+    scheduler_service.start_scheduler()
+
+    @app.route("/api/alerts", methods=["GET"])
+    def api_get_alerts():
+        """Returns the most recent system alerts."""
+        return jsonify({"status": "success", "data": alert_service.get_recent_alerts()})
+
+    @app.route("/api/agent/report", methods=["POST", "OPTIONS"])
+    @limiter.limit("60 per minute")
+    def api_agent_report():
+        """
+        Receives advanced agent telemetry including running containers.
+        """
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+            
+        data = request.get_json(silent=True) or {}
+        agent_id = data.get("agentId", "unknown")
+        
+        # We can store this in the AGENT_CACHE or MongoDB
+        try:
+            db_service.db.agent_reports.insert_one({
+                "agent_id": agent_id,
+                "timestamp": datetime.utcnow(),
+                "data": data
+            })
+        except Exception:
+            pass # fallback to memory
+            
+        AGENT_CACHE[agent_id] = {
+            "timestamp": time.time(),
+            "data": data,
+            "ip": request.remote_addr
+        }
+        
+        # Analyze risk of the immediate vulnerabilities posted by the agent
+        vulns = data.get("vulnerabilities", [])
+        if vulns:
+            # We map this into our risk engine
+            pass
+            
+        return jsonify({"status": "success", "message": "Telemetry received"})
+
+    @app.route("/api/risk/score", methods=["GET"])
+    def api_risk_score():
+        """Returns global aggregated risk score from recent findings."""
+        # Simple aggregated demo calculation: pulling from AGENT_CACHE
+        total_vulns = []
+        for agent in AGENT_CACHE.values():
+            total_vulns.extend(agent["data"].get("vulnerabilities", []))
+            
+        from risk_engine import compute_risk_scores
+        score_data = compute_risk_scores(total_vulns)
+        return jsonify({"status": "success", "data": score_data})
 
     return app
 

@@ -50,11 +50,17 @@
         <div class="status-bar-inner">
             <span id="sb-system-status" class="sb-status">🟢 System Healthy</span>
             <span class="sb-sep">|</span>
+            <span class="sb-item">Global Risk: <strong id="sb-global-risk" style="padding: 0.1rem 0.4rem; border-radius: 4px; background: var(--bg-primary);">—</strong></span>
+            <span class="sb-sep">|</span>
             <span class="sb-item">Agents: <strong id="sb-agent-count">—</strong></span>
             <span class="sb-sep">|</span>
             <span class="sb-item">Active Threats: <strong id="sb-threat-count">—</strong></span>
             <span class="sb-sep">|</span>
             <span class="sb-item">Last Scan: <span id="sb-last-scan">N/A</span></span>
+            <span class="sb-sep">|</span>
+            <span class="sb-item" style="cursor: pointer; color: var(--accent-blue);" onclick="toggleAlertsPanel()">
+                <span class="btn-icon">🔔</span> Alerts (<span id="sb-alert-count">0</span>)
+            </span>
             <span class="sb-flex"></span>
             <span class="sb-item sb-hint">Press <kbd>Enter</kbd> to scan &bull; <kbd>Esc</kbd> to close panels</span>
             <span class="sb-sep">|</span>
@@ -561,6 +567,26 @@ Example JSON:
                     <span class="deploy-status-indicator"></span>
                     <span>Once running, the agent appears in <strong>Endpoints</strong> within 30 seconds</span>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Alerts Modal ── -->
+    <div id="alerts-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="alerts-modal-title" onclick="closeAlertsModalOutside(event)">
+        <div class="modal-box deploy-modal-box">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <span class="modal-icon">🚨</span>
+                    <div>
+                        <h2 id="alerts-modal-title" class="modal-title">System Alerts</h2>
+                        <p class="modal-subtitle">Recent critical notifications from agent and cloud scans</p>
+                    </div>
+                </div>
+                <button class="modal-close-btn" onclick="toggleAlertsPanel()" aria-label="Close modal">✕</button>
+            </div>
+            
+            <div id="alerts-list-container" style="max-height: 400px; overflow-y: auto; padding-right: 0.5rem; margin-top: 1rem;">
+                <p style="color:var(--text-muted); font-size:0.85rem;">Loading alerts...</p>
             </div>
         </div>
     </div>
