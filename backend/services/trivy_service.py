@@ -25,6 +25,14 @@ def scan_container_image(image_name: str) -> dict:
     Run: trivy image <image_name> --format json --quiet
     Returns structured vulnerability report from real Trivy output.
     """
+    if not image_name or not isinstance(image_name, str):
+        return {"status": "error", "message": "Invalid image name", "vulnerabilities": [], "summary": {}}
+
+    # Sanitize image name — only allow safe characters (BEFORE invoking any subprocess)
+    import re
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]{0,254}$', image_name.strip()):
+        return {"status": "error", "message": "Invalid image name format", "vulnerabilities": [], "summary": {}}
+
     if not _trivy_available():
         return {
             "status": "error",
@@ -33,14 +41,6 @@ def scan_container_image(image_name: str) -> dict:
             "vulnerabilities": [],
             "summary": {}
         }
-
-    if not image_name or not isinstance(image_name, str):
-        return {"status": "error", "message": "Invalid image name", "vulnerabilities": []}
-
-    # Sanitize image name — only allow safe characters
-    import re
-    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]{0,254}$', image_name.strip()):
-        return {"status": "error", "message": "Invalid image name format", "vulnerabilities": []}
 
     image_name = image_name.strip()
     started_at = datetime.utcnow().isoformat() + "Z"

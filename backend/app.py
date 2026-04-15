@@ -1,7 +1,13 @@
 """
 CloudShield Flask API v2.0
-Backend API with CORS, rate limiting, and raw config scanning.
+Backend API with CORS, rate limiting, and real-time security scanning.
 """
+
+import logging
+from logging_config import configure_logging
+configure_logging()   # must be first — initialises all child loggers
+
+_log = logging.getLogger("cloudshield.api")
 
 import json
 import os
@@ -25,7 +31,7 @@ from google.cloud import storage
 from google.api_core.exceptions import GoogleAPIError
 from google.oauth2 import service_account
 
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_limiter import Limiter
@@ -76,16 +82,17 @@ def create_app():
     ATTACK_TRACKER = {"rate_window": [], "peak_rate": 0}
 
     def add_soc_event(level: str, message: str):
-        """Append to SOC timeline and print structured log."""
+        """Append to SOC timeline and emit structured log."""
         entry = {
             "level": level,
             "message": message,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         SOC_TIMELINE.insert(0, entry)
         if len(SOC_TIMELINE) > 100:
             SOC_TIMELINE.pop()
-        print(f"[{level}] {message}")
+        log_fn = _log.warning if level in ("WARNING", "CRITICAL") else _log.info
+        log_fn("[SOC] [%s] %s", level, message)
 
     @app.before_request
     def log_request_info():

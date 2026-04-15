@@ -54,7 +54,7 @@ def _build_prompt(findings: list, risk_score: dict) -> str:
 
     prompt = f"""You are a senior cloud security analyst. Analyze the following REAL security findings from a live system scan.
 
-RISK SCORE: {risk_score.get("final_score", 0)} / 4.0 — Category: {risk_score.get("category", "UNKNOWN")}
+RISK SCORE: {risk_score.get("final_score", 0)}/100 — Category: {risk_score.get("category", "UNKNOWN")}
 Findings: {risk_score.get("finding_count", len(findings))} total | CRITICAL: {sev_counts["CRITICAL"]} | HIGH: {sev_counts["HIGH"]} | MEDIUM: {sev_counts["MEDIUM"]} | LOW: {sev_counts["LOW"]}
 Sources: {", ".join(sorted(sources))}
 
@@ -190,7 +190,7 @@ def _no_key_analysis(findings: list, risk_score: dict) -> dict:
         "executive_summary":     (
             f"System scan identified {total} findings: {sev_counts['CRITICAL']} CRITICAL, "
             f"{sev_counts['HIGH']} HIGH, {sev_counts['MEDIUM']} MEDIUM, {sev_counts['LOW']} LOW. "
-            f"Aggregate risk score is {score}/4.0 ({cat}). "
+            f"Aggregate risk score is {score}/100 ({cat}). "
             f"Immediate remediation of critical and high severity issues is recommended."
         ),
         "attack_vectors":        attack_vectors or ["No cross-source attack paths detected at current findings level."],
