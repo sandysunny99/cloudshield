@@ -1184,54 +1184,33 @@ window.runContainerScan = async function() {
             body: JSON.stringify({ image })
         });
         const json = await res.json();
-        console.log("API RESPONSE:", json); // Phase 5
-        let data = json.data || {};
+        console.log("API RESPONSE:", json);
 
-        // Phase 6: FORCE UI OVERRIDE (SAFETY)
-        if (json.error || data.status === 'error' || !data.vulnerabilities) {
-            console.warn("Using fallback UI");
-            data = {
-                _demo_mode: true,
-                status: 'completed',
-                artifact_name: image,
-                vulnerabilities: [{
-                    id: "CVE-DEMO-FORCED",
-                    severity: "HIGH",
-                    title: "Forced UI fallback",
-                    pkg: "system",
-                    fixed_version: "Update system"
-                }],
-                summary: { total: 1, critical: 0, high: 1, medium: 0, low: 0 }
-            };
+        const vulnerabilities = json?.data?.vulnerabilities || [];
+
+        let demoBanner = '';
+        if (json?.data?._demo_mode) {
+            demoBanner = `<div style="background:rgba(234,179,8,0.15);border:1px solid var(--color-medium);border-radius:8px;padding:0.6rem 1rem;font-size:0.82rem;margin-bottom:1rem;">⚠️ <strong>Demo Mode:</strong> Simulated vulnerabilities</div>`;
         }
 
-        // Show demo banner if running in fallback mode
-        const demoBanner = data._demo_mode
-            ? `<div style="background:rgba(234,179,8,0.15);border:1px solid var(--color-medium);border-radius:8px;padding:0.6rem 1rem;font-size:0.82rem;margin-bottom:1rem;">⚠️ <strong>Demo Mode:</strong> Trivy not installed on server — showing representative CVE data for demonstration purposes.</div>`
-            : '';
-
-        const findings = data.vulnerabilities || [];
-        if (!findings || findings.length === 0) {
-            resultEl.innerHTML = `<div class="container-scan-error">✅ No vulnerabilities found</div>`;
-        } else {
-            renderContainerScanResult(data, resultEl, demoBanner);
-            showToast(`Container scan complete: ${data.summary?.total || 0} vulnerabilities`, 
-                       (data.summary?.critical || 0) > 0 ? 'error' : 'success');
-            addSocEvent('INFO', `Container scan '${image}': ${data.summary?.total || 0} vulns (${data.summary?.critical || 0} critical).`);
-
-            // Phase 7: auto-trigger AI analysis after scan
-            const findingsList = findings.map(v => ({
+        if (vulnerabilities.length > 0) {
+            renderContainerScanResult(json.data || {}, resultEl, demoBanner);
+            showToast(`Container scan complete: ${vulnerabilities.length} vulnerabilities`, 'warning');
+            
+            const findingsList = vulnerabilities.map(v => ({
                 id: v.id, severity: v.severity, source: 'trivy',
                 title: v.title, description: v.description || ''
             }));
             
             console.log("Findings sent to AI:", findingsList);
             runAIAnalysis(findingsList);
+        } else {
+            resultEl.innerHTML = `<div class="container-scan-error">✅ No vulnerabilities found</div>`;
         }
 
     } catch(e) {
-        resultEl.innerHTML = `<div class="container-scan-error">❌ Scan failed: ${e.message}</div>`;
-        showToast('Container scan failed: ' + e.message, 'error');
+        resultEl.innerHTML = `<div class="container-scan-error">❌ Connection failed: ${e.message}</div>`;
+        showToast('Container scan failed', 'error');
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<span class="btn-icon">🔍</span> Scan Image';
