@@ -155,7 +155,14 @@ def _no_key_analysis(findings: list, risk_score: dict) -> dict:
         if s in sev_counts:
             sev_counts[s] += 1
 
-    cat = risk_score.get("category", "LOW")
+    # Force category logic to guarantee no false SAFEs if findings exist
+    if len(findings) >= 3:
+        cat = "HIGH"
+    elif len(findings) >= 1:
+        cat = "MEDIUM"
+    else:
+        cat = risk_score.get("category", "LOW")
+
     score = risk_score.get("final_score", 0)
     total = risk_score.get("finding_count", len(findings))
 

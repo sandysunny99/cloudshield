@@ -40,7 +40,7 @@ def _normalize_input(data: dict) -> dict:
         normalized["s3_buckets"].append({
             "name": data["s3"].get("bucket_name", "unknown"),
             "public": data["s3"].get("public", False),
-            "encryption": {"enabled": data["s3"].get("encryption", True)}
+            "encryption": bool(data["s3"].get("encryption", True))
         })
     elif "s3_buckets" in data:
         normalized["s3_buckets"] = data["s3_buckets"]
@@ -162,7 +162,10 @@ def _evaluate_builtin(config: dict, scanned_at: str) -> dict:
         if bucket.get("public", False) or bucket.get("acl") in ("public-read", "public-read-write"):
             add("CRITICAL", "S3 Bucket Publicly Accessible",
                 f"S3 bucket '{name}' is publicly readable. Sensitive data may be exposed.", name)
-        if not bucket.get("encryption", {}).get("enabled", True) if isinstance(bucket.get("encryption"), dict) else bucket.get("encryption") is False:
+        
+        # Strictly evaluate missing or False encryption wrapper 
+        encryption = bucket.get("encryption")
+        if encryption is False or (isinstance(encryption, dict) and not encryption.get("enabled", True)):
             add("HIGH", "S3 Bucket Encryption Disabled",
                 f"S3 bucket '{name}' does not have server-side encryption enabled.", name)
         if not bucket.get("versioning", {}).get("enabled", True) if isinstance(bucket.get("versioning"), dict) else False:
@@ -198,12 +201,19 @@ def _evaluate_builtin(config: dict, scanned_at: str) -> dict:
         # Check both legacy 'ingress_rules' and new strict 'inbound' key
         rules = sg.get("inbound", sg.get("ingress_rules", []))
         for rule in rules:
-            if rule.get("cidr") in ("0.0.0.0/0", "::/0"):
-                port = rule.get("port", "any")
-                proto = rule.get("protocol", "tcp")
-                sev = "HIGH" if str(port) in ("22", "3389", "3306", "5432", "27017") else "MEDIUM"
-                add(sev, f"Security Group Allows Unrestricted {proto.upper()} Port {port}",
-                    f"Security group '{name}' allows inbound {proto} port {port} from 0.0.0.0/0 (all IPs).", name)
+            cidr = rule.get("cidr")
+            port = rule.get("port", "any")
+            proto = rule.get("protocol", "tcp")
+            
+            if cidr in ("0.0.0.0/0", "::/0"):
+                sev = "HIGH" if str(port) in ("22", "80", "3389", "3306", "5432", "27017") else "MEDIUM"
+                
+                if str(port) == "80":
+                    add("HIGH", "Public HTTP open to internet",
+                        f"Security group '{name}' allows inbound unencrypted HTTP port 80 from 0.0.0.0/0.", name)
+                else:
+                    add(sev, f"Security Group Allows Unrestricted {proto.upper()} Port {port}",
+                        f"Security group '{name}' allows inbound {proto} port {port} from 0.0.0.0/0 (all IPs).", name)
 
     # ── Container / ECS Rules ──
     for container in config.get("containers", []):
