@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+
+  # ── CloudShield Flask Backend ──────────────────────────────────
+  app:
+    build: .
+    container_name: cloudshield-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - AGENT_KEYS=${AGENT_KEYS:-default-agent-key-123}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173}
+      - MONGODB_URI=mongodb://mongo:27017/cloudshield
+      - OPA_SERVER_URL=http://opa:8181
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+    depends_on:
+      - mongo
+      - opa
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # needed for Trivy image scan
+    restart: unless-stopped
+    networks:
+      - cloudshield-net
+
+  # ── MongoDB ────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    container_name: cloudshield-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=cloudshield
+    restart: unless-stopped
+    networks:
+      - cloudshield-net
+
+  # ── Open Policy Agent (OPA) ───────────────────────────────────
+  opa:
+    image: openpolicyagent/opa:latest
+    container_name: cloudshield-opa
+    ports:
+      - "8181:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-level=error"
+      - "/policies"
+    volumes:
+      - ./policies:/policies:ro
+    restart: unless-stopped
+    networks:
+      - cloudshield-net
+
+volumes:
+  mongo-data:
+
+networks:
+  cloudshield-net:
+    driver: bridge

@@ -869,6 +869,210 @@ def create_app():
             "backend_url": backend_url
         })
 
+    # ══════════════════════════════════════════════════════════════════
+    #  EXTENDED SERVICES — Phase 2-8 (Trivy, OPA, AI, Compliance, DB)
+    #  All routes are ADDITIVE — existing routes are not modified.
+    # ══════════════════════════════════════════════════════════════════
+
+    from services.trivy_service      import scan_container_image
+    from services.opa_service        import evaluate_cloud_config
+    from services.ai_service         import analyze_risk
+    from services.correlation_service import correlate_all
+    from services.compliance_service  import map_findings_to_compliance
+    from services import db_service
+
+    @app.route("/api/scan/container", methods=["POST", "OPTIONS"])
+    @limiter.limit("10 per minute")
+    def api_scan_container():
+        """
+        Trivy container image scan.
+        POST body: { "image": "nginx:latest" }
+        Returns real CVE findings from Trivy.
+        """
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        body = request.get_json(silent=True) or {}
+        image = body.get("image", "").strip()
+        if not image:
+            return jsonify({"status": "error", "message": "image field is required"}), 400
+
+        result = scan_container_image(image)
+
+        if result.get("status") == "completed":
+            # Persist to DB (async-safe, non-blocking)
+            try:
+                db_service.save_vulnerability_scan(image, result)
+            except Exception:
+                pass
+            add_soc_event("INFO" if result["summary"]["critical"] == 0 else "WARNING",
+                          f"Container scan '{image}': {result['summary']['total']} vulns "
+                          f"({result['summary']['critical']} critical, {result['summary']['high']} high).")
+
+        return jsonify({"status": result.get("status", "error"), "data": result})
+
+    @app.route("/api/scan/cloud", methods=["POST", "OPTIONS"])
+    @limiter.limit("20 per minute")
+    def api_scan_cloud():
+        """
+        OPA/built-in cloud configuration policy scan.
+        POST body: JSON cloud config (AWS/GCP/Azure resource definitions)
+        Returns policy violations mapped to real rules.
+        """
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        body = request.get_json(silent=True)
+        if not body or not isinstance(body, dict):
+            return jsonify({"status": "error", "message": "Valid JSON cloud config required"}), 400
+
+        # Limit payload size
+        if len(json.dumps(body)) > 256 * 1024:
+            return jsonify({"status": "error", "message": "Config payload exceeds 256KB limit"}), 413
+
+        result = evaluate_cloud_config(body)
+
+        if result.get("status") == "completed":
+            try:
+                db_service.save_cloud_scan("json", result)
+            except Exception:
+                pass
+            add_soc_event("WARNING" if result["summary"]["CRITICAL"] > 0 else "INFO",
+                          f"Cloud scan: {result['summary']['total']} violations "
+                          f"({result['summary']['CRITICAL']} critical).")
+
+        return jsonify({"status": result.get("status", "error"), "data": result})
+
+    @app.route("/api/analyze/risk", methods=["POST", "OPTIONS"])
+    @limiter.limit("10 per minute")
+    def api_analyze_risk():
+        """
+        AI/LLM-powered risk analysis.
+        POST body: { "findings": [...], "risk_score": {...} }
+        Returns enriched risk narrative, attack vectors, and remediation steps.
+        """
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        body = request.get_json(silent=True) or {}
+        findings   = body.get("findings", [])
+        risk_score = body.get("risk_score", {})
+
+        if not isinstance(findings, list):
+            return jsonify({"status": "error", "message": "findings must be a list"}), 400
+
+        analysis = analyze_risk(findings, risk_score)
+        add_soc_event("INFO", f"AI risk analysis complete: {analysis.get('overall_risk', 'N/A')} risk "
+                              f"(engine: {analysis.get('_source', 'unknown')}).")
+
+        return jsonify({"status": "success", "data": analysis})
+
+    @app.route("/api/report/unified", methods=["POST", "OPTIONS"])
+    @limiter.limit("10 per minute")
+    def api_report_unified():
+        """
+        Full unified security report combining:
+        - Container CVE scan (Trivy)
+        - Cloud config policy scan (OPA)
+        - AI risk analysis
+        - Cross-source correlation
+        - Compliance mapping (CIS, NIST, ISO 27001, HIPAA)
+
+        POST body: {
+          "image":        "nginx:latest",    // optional
+          "cloud_config": {...},             // optional
+          "agent_id":     "uuid"             // optional — pull from AGENT_CACHE
+        }
+        """
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        body = request.get_json(silent=True) or {}
+        image        = body.get("image", "").strip()
+        cloud_config = body.get("cloud_config", {})
+        agent_id     = body.get("agent_id", "")
+
+        # Step 1: Container scan (if image provided)
+        container_result = {}
+        container_vulns  = []
+        if image:
+            container_result = scan_container_image(image)
+            container_vulns  = container_result.get("vulnerabilities", [])
+
+        # Step 2: Cloud policy scan (if config provided)
+        cloud_result    = {}
+        policy_violations = []
+        if cloud_config and isinstance(cloud_config, dict):
+            cloud_result      = evaluate_cloud_config(cloud_config)
+            policy_violations = cloud_result.get("violations", [])
+
+        # Step 3: Pull live agent CVEs if agent_id provided or any agent is online
+        agent_cve_findings = []
+        now = time.time()
+        if agent_id and agent_id in AGENT_CACHE:
+            agent_cve_findings = AGENT_CACHE[agent_id]["data"].get("vulnerabilities", [])
+        elif not agent_id:
+            for a_id, entry in AGENT_CACHE.items():
+                if now - entry["timestamp"] <= 180:
+                    agent_cve_findings = entry["data"].get("vulnerabilities", [])
+                    break
+
+        # Step 4: Correlate all streams
+        corr_result = correlate_all(
+            cve_findings=agent_cve_findings,
+            policy_violations=policy_violations,
+            container_vulns=container_vulns
+        )
+        all_findings = corr_result["findings"]
+        risk         = corr_result["risk"]
+
+        # Step 5: AI analysis
+        ai_analysis = analyze_risk(all_findings, risk)
+
+        # Step 6: Compliance mapping
+        compliance = map_findings_to_compliance(all_findings)
+
+        # Step 7: Build unified report
+        report = {
+            "timestamp":          datetime.now().isoformat(),
+            "risk":               risk,
+            "ai_analysis":        ai_analysis,
+            "compliance":         compliance,
+            "correlation_events": corr_result.get("correlation_events", []),
+            "stream_counts":      corr_result.get("stream_counts", {}),
+            "findings":           all_findings[:100],    # cap for payload size
+            "container_scan":     {
+                "image":   image,
+                "summary": container_result.get("summary", {}),
+                "status":  container_result.get("status", "skipped")
+            },
+            "cloud_scan": {
+                "summary": cloud_result.get("summary", {}),
+                "status":  cloud_result.get("status", "skipped"),
+                "engine":  cloud_result.get("engine", "none")
+            },
+            "alert_summary": {
+                "total":    risk.get("finding_count", 0),
+                "critical": sum(1 for f in all_findings if f.get("severity") == "CRITICAL"),
+                "high":     sum(1 for f in all_findings if f.get("severity") == "HIGH"),
+                "medium":   sum(1 for f in all_findings if f.get("severity") == "MEDIUM"),
+                "low":      sum(1 for f in all_findings if f.get("severity") == "LOW"),
+            }
+        }
+
+        # Persist report
+        try:
+            db_service.save_risk_report(report)
+        except Exception:
+            pass
+
+        add_soc_event("WARNING" if risk.get("category") in ("CRITICAL", "HIGH") else "INFO",
+                      f"Unified report generated: {risk.get('category', 'N/A')} risk, "
+                      f"{risk.get('finding_count', 0)} total findings.")
+
+        return jsonify({"status": "completed", "data": report})
+
+    @app.route("/api/db/health", methods=["GET"])
+    def api_db_health():
+        """Database connection health check."""
+        return jsonify(db_service.health_check())
+
     return app
 
 

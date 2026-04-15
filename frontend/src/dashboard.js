@@ -1158,3 +1158,202 @@ document.addEventListener('keydown', (e) => {
         }
     }
 });
+
+// ══════════════════════════════════════════════════════════════════
+//  EXTENDED MODULES — Container Scan, AI Analysis, Compliance
+// ══════════════════════════════════════════════════════════════════
+
+// ── Container Image Scanner ──────────────────────────────────────
+window.runContainerScan = async function() {
+    const input = document.getElementById('container-image-input');
+    const resultEl = document.getElementById('container-scan-result');
+    const btn = document.getElementById('btn-container-scan');
+    if (!input || !resultEl) return;
+
+    const image = input.value.trim();
+    if (!image) { showToast('Enter a container image name first', 'warning'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Scanning...';
+    resultEl.innerHTML = '<div class="container-scanning"><span class="spinner"></span> Running Trivy scan on <strong>' + image + '</strong>... this may take 30-60s for first pull.</div>';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/scan/container`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image })
+        });
+        const json = await res.json();
+        const data = json.data || {};
+
+        if (data.status === 'error') {
+            resultEl.innerHTML = `<div class="container-scan-error">❌ ${data.message}</div>`;
+            showToast(data.message, 'error');
+            return;
+        }
+
+        renderContainerScanResult(data, resultEl);
+        showToast(`Container scan complete: ${data.summary?.total || 0} vulnerabilities`, 
+                   (data.summary?.critical || 0) > 0 ? 'error' : 'success');
+        addSocEvent('INFO', `Container scan '${image}': ${data.summary?.total || 0} vulns (${data.summary?.critical || 0} critical).`);
+    } catch(e) {
+        resultEl.innerHTML = `<div class="container-scan-error">❌ Scan failed: ${e.message}</div>`;
+        showToast('Container scan failed: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="btn-icon">🔍</span> Scan Image';
+    }
+};
+
+function renderContainerScanResult(data, container) {
+    const s = data.summary || {};
+    const vulns = data.vulnerabilities || [];
+
+    const sevBadge = (sev, count) => {
+        if (!count) return '';
+        const cls = { CRITICAL: 'badge-critical', HIGH: 'badge-high', MEDIUM: 'badge-medium', LOW: 'badge-low' }[sev] || 'badge-low';
+        return `<span class="badge ${cls}">${count} ${sev}</span>`;
+    };
+
+    const topVulns = vulns.slice(0, 20).map(v => `
+        <tr>
+            <td><code style="color:var(--accent-blue);font-size:0.75rem;">${v.id}</code></td>
+            <td>${v.pkg}</td>
+            <td><span class="badge badge-${v.severity.toLowerCase()}">${v.severity}</span></td>
+            <td style="max-width:250px;font-size:0.8rem;">${(v.title||'').slice(0,80)}</td>
+            <td style="font-size:0.78rem;color:${v.fixed_version === 'Not fixed' ? 'var(--color-critical)' : 'var(--color-low)'};">${v.fixed_version}</td>
+        </tr>`).join('');
+
+    container.innerHTML = `
+        <div class="container-scan-summary">
+            <div class="cs-meta">
+                <strong>${data.artifact_name || data.scan_target}</strong>
+                <span style="color:var(--text-muted);font-size:0.78rem;">Scanned at ${data.scanned_at || ''}</span>
+            </div>
+            <div class="cs-badges">
+                ${sevBadge('CRITICAL', s.critical)}
+                ${sevBadge('HIGH', s.high)}
+                ${sevBadge('MEDIUM', s.medium)}
+                ${sevBadge('LOW', s.low)}
+                ${s.total === 0 ? '<span class="badge badge-low">✅ Clean</span>' : ''}
+            </div>
+        </div>
+        ${vulns.length > 0 ? `
+        <div class="table-container" style="margin-top:1rem;">
+            <table>
+                <thead><tr><th>CVE ID</th><th>Package</th><th>Severity</th><th>Title</th><th>Fix Version</th></tr></thead>
+                <tbody>${topVulns}</tbody>
+            </table>
+            ${vulns.length > 20 ? `<p style="padding:0.5rem 1rem;font-size:0.78rem;color:var(--text-muted);">Showing 20 of ${vulns.length} vulnerabilities. Export report for full list.</p>` : ''}
+        </div>` : '<p style="padding:1rem;color:var(--color-low);">✅ No vulnerabilities found in this image.</p>'}`;
+}
+
+// ── AI Risk Panel Renderer ────────────────────────────────────────
+function renderAiAnalysis(analysis) {
+    const container = document.getElementById('ai-analysis-container');
+    if (!container || !analysis) return;
+
+    const riskColor = {
+        CRITICAL: 'var(--color-critical)',
+        HIGH:     'var(--color-high)',
+        MEDIUM:   'var(--color-medium)',
+        LOW:      'var(--color-low)'
+    }[analysis.overall_risk] || 'var(--text-secondary)';
+
+    const actions = (analysis.priority_actions || []).map((a, i) => `
+        <div class="ai-action">
+            <div class="ai-action-rank">${a.rank || i+1}</div>
+            <div class="ai-action-body">
+                <div class="ai-action-title">${a.action}</div>
+                ${a.command ? `<code class="ai-action-cmd">${a.command}</code>` : ''}
+                <span class="ai-urgency ai-urgency-${a.urgency || 'low'}">${a.urgency || 'low'}</span>
+            </div>
+        </div>`).join('');
+
+    const vectors = (analysis.attack_vectors || []).map(v =>
+        `<li class="ai-vector-item">⚠️ ${v}</li>`).join('');
+
+    const source = analysis._source === 'openai'
+        ? `<span class="engine-badge engine-ai">🤖 OpenAI ${analysis._model || ''}</span>`
+        : `<span class="engine-badge engine-det">⚙️ Deterministic Engine</span>`;
+
+    container.innerHTML = `
+        <div class="ai-card">
+            <div class="ai-header">
+                <div>
+                    <div class="ai-risk-level" style="color:${riskColor};">${analysis.overall_risk || 'N/A'}</div>
+                    <div class="ai-risk-label">Overall Risk Level</div>
+                </div>
+                ${source}
+            </div>
+            <div class="ai-summary">${analysis.executive_summary || ''}</div>
+            ${vectors ? `<div class="ai-section"><div class="ai-section-title">⚡ Attack Vectors</div><ul class="ai-vectors">${vectors}</ul></div>` : ''}
+            ${actions ? `<div class="ai-section"><div class="ai-section-title">🔧 Priority Actions</div><div class="ai-actions">${actions}</div></div>` : ''}
+            ${analysis.compliance_risk ? `<div class="ai-section"><div class="ai-section-title">📋 Compliance Risk</div><p class="ai-summary">${analysis.compliance_risk}</p></div>` : ''}
+            ${analysis.estimated_blast_radius ? `<div class="ai-section"><div class="ai-section-title">💥 Blast Radius</div><p class="ai-summary">${analysis.estimated_blast_radius}</p></div>` : ''}
+        </div>`;
+}
+
+// ── Compliance Panel Renderer ──────────────────────────────────────
+function renderCompliancePanel(compliance) {
+    const container = document.getElementById('compliance-container');
+    if (!container || !compliance) return;
+
+    const fw = compliance.framework_summary || {};
+    const statusIcon = s => s === 'COMPLIANT' ? '✅' : s === 'FAILING' ? '❌' : '⚠️';
+    const statusColor = s => s === 'COMPLIANT' ? 'var(--color-low)' : s === 'FAILING' ? 'var(--color-critical)' : 'var(--color-high)';
+
+    const frameworkCards = Object.values(fw).map(f => `
+        <div class="compliance-fw-card">
+            <div class="fw-header">
+                <span class="fw-name">${f.name}</span>
+                <span style="color:${statusColor(f.status)};font-weight:700;">${statusIcon(f.status)} ${f.status}</span>
+            </div>
+            <div class="fw-violations">${f.violations} control${f.violations !== 1 ? 's' : ''} violated</div>
+        </div>`).join('');
+
+    const sev = compliance.severity_breakdown || {};
+    const overallColor = statusColor(compliance.overall_status);
+
+    container.innerHTML = `
+        <div class="compliance-card">
+            <div class="compliance-header">
+                <div>
+                    <div class="compliance-status" style="color:${overallColor};">${statusIcon(compliance.overall_status)} ${compliance.overall_status}</div>
+                    <div class="compliance-subtitle">${compliance.findings_mapped} findings mapped across ${compliance.frameworks_impacted} frameworks</div>
+                </div>
+                <div class="compliance-sev-row">
+                    ${sev.CRITICAL ? `<span class="badge badge-critical">${sev.CRITICAL} Critical</span>` : ''}
+                    ${sev.HIGH     ? `<span class="badge badge-high">${sev.HIGH} High</span>`         : ''}
+                </div>
+            </div>
+            <div class="compliance-frameworks">${frameworkCards}</div>
+            ${compliance.nist_controls?.length ? `
+            <div class="compliance-controls-section">
+                <div class="compliance-controls-title">NIST 800-53 Controls Triggered</div>
+                <div class="compliance-controls-list">${compliance.nist_controls.slice(0,8).map(c => `<span class="ctrl-badge">${c}</span>`).join('')}</div>
+            </div>` : ''}
+        </div>`;
+}
+
+// ── Hook renderers into existing renderResults ────────────────────
+const _origRenderResults = window.renderResults || function(){};
+window.renderResults = function(data) {
+    _origRenderResults(data);   // preserve existing rendering
+
+    // Trigger AI analysis from scan result
+    if (data?.findings && data?.risk) {
+        fetch(`${API_BASE}/api/analyze/risk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ findings: data.findings, risk_score: data.risk })
+        }).then(r => r.json()).then(json => {
+            if (json.status === 'success') renderAiAnalysis(json.data);
+        }).catch(() => {});
+    }
+
+    // Render compliance data if present
+    if (data?.compliance) {
+        renderCompliancePanel(data.compliance);
+    }
+};
