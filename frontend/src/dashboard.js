@@ -1357,3 +1357,69 @@ window.renderResults = function(data) {
         renderCompliancePanel(data.compliance);
     }
 };
+
+// ══════════════════════════════════════════════════════════════════
+//  EXTENDED MODULES — Global Risk & Alerts Polling (Phase 6)
+// ══════════════════════════════════════════════════════════════════
+
+async function updateGlobalRisk() {
+    try {
+        const res = await fetch(`${API_BASE}/api/risk/score`);
+        const json = await res.json();
+        if (json.status === 'success' && json.data) {
+            const rEl = document.getElementById('sb-global-risk');
+            const score = json.data.final_score || 0;
+            const category = json.data.category || 'LOW';
+            rEl.textContent = `${score}/100`;
+            const riskColor = {
+                CRITICAL: 'var(--color-critical)',
+                HIGH:     'var(--color-high)',
+                MEDIUM:   'var(--color-medium)',
+                LOW:      'var(--color-low)'
+            }[category] || 'var(--color-low)';
+            rEl.style.color = riskColor;
+        }
+    } catch(e) {}
+}
+
+async function updateAlerts() {
+    try {
+        const res = await fetch(`${API_BASE}/api/alerts`);
+        const json = await res.json();
+        if (json.status === 'success' && json.data) {
+            document.getElementById('sb-alert-count').textContent = json.data.length;
+            
+            const container = document.getElementById('alerts-list-container');
+            if (json.data.length === 0) {
+                container.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">No recent alerts.</p>';
+            } else {
+                container.innerHTML = json.data.map(a => {
+                    const color = a.level === 'CRITICAL' ? 'var(--color-critical)' : 'var(--color-high)';
+                    return `
+                    <div style="border-left: 3px solid ${color}; padding: 0.75rem; background: var(--bg-primary); margin-bottom: 0.5rem; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.2rem;">${a.timestamp} | ${a.source}</div>
+                        <div style="font-weight: 600; font-size: 0.85rem;">[${a.level}] ${a.message}</div>
+                        ${a.risk_score ? `<div style="font-size: 0.75rem; color: var(--color-warning); margin-top: 0.2rem;">Risk Score Trigger: ${a.risk_score}</div>` : ''}
+                    </div>
+                `}).join('');
+            }
+        }
+    } catch(e) {}
+}
+
+window.toggleAlertsPanel = function() {
+    document.getElementById('alerts-modal')?.classList.toggle('hidden');
+    updateAlerts(); // force refresh on open
+};
+
+window.closeAlertsModalOutside = function(e) {
+    if (e.target.id === 'alerts-modal') {
+        document.getElementById('alerts-modal').classList.add('hidden');
+    }
+};
+
+// Poll them every 15s
+updateGlobalRisk();
+updateAlerts();
+setInterval(() => { if (!document.hidden) { updateGlobalRisk(); updateAlerts(); } }, 15000);
+

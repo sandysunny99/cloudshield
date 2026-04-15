@@ -142,6 +142,28 @@ def get_system_telemetry():
         
     unique_ports = {p['port']: p for p in open_ports}.values()
 
+    # Fetch running containers if docker is present
+    docker_containers = []
+    if shutil.which("docker"):
+        try:
+            res = subprocess.run(["docker", "ps", "--format", "{{json .}}"], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                for line in res.stdout.strip().splitlines():
+                    if not line: continue
+                    try:
+                        c_data = json.loads(line)
+                        docker_containers.append({
+                            "id": c_data.get("ID", ""),
+                            "image": c_data.get("Image", ""),
+                            "name": c_data.get("Names", ""),
+                            "status": c_data.get("Status", ""),
+                            "ports": c_data.get("Ports", "")
+                        })
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     # Background Trivy Check
     if time.time() - last_trivy_scan_time > TRIVY_INTERVAL or last_trivy_scan_time == 0:
         last_trivy_scan_time = time.time()
@@ -161,7 +183,8 @@ def get_system_telemetry():
         "ram_percent": ram_percent,
         "top_processes": processes,
         "open_ports": list(unique_ports)[:20],
-        "vulnerabilities": cached_vulns
+        "vulnerabilities": cached_vulns,
+        "docker_containers": docker_containers
     }
     
     return payload, ts, nonce, cpu_percent
@@ -191,6 +214,12 @@ def ship_telemetry():
             for attempt in range(3):
                 try:
                     res = requests.post(API_URL, data=payload_json, headers=headers, timeout=10)
+                    
+                    # Also send to the new advanced report endpoint
+                    report_url = API_URL.replace("/api/agent-scan", "/api/agent/report")
+                    if report_url != API_URL:
+                        requests.post(report_url, data=payload_json, headers=headers, timeout=10)
+                        
                     if res.status_code == 200:
                         break
                     elif res.status_code == 403:
