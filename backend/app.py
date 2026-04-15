@@ -928,6 +928,7 @@ def create_app():
         POST body: JSON cloud config (AWS/GCP/Azure resource definitions)
         Returns policy violations mapped to real rules.
         """
+        print("CLOUD FIX VERSION 2 ACTIVE", flush=True)
         if request.method == "OPTIONS":
             return jsonify({}), 200
         
