@@ -449,46 +449,37 @@ async function scanRawConfig() {
     try {
         const res = await fetch(`${API_BASE}/api/scan/cloud`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: configText // Raw JSON passed directly to OPA service
+            body: configText
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
         
-        // Phase 9 frontend check
         console.log("Cloud scan response:", json);
 
-        if (json.status === 'error') {
-            statusEl.textContent = `❌ ${json.message}`;
-            statusEl.className = 'config-status error';
-            addLog(`Error: ${json.message}`, 'error');
-            showToast(json.message, 'error');
-            showPipelineError();
-        } else {
-            // Ensure json.violations is used
-            const violations = json.violations || [];
-            const n = violations.length;
-            
-            statusEl.textContent = `✅ Analysis complete — ${n} issues found`;
-            statusEl.className = 'config-status success';
-            
-            // Map strictly to existing UI alert renderer
-            const alerts = violations.map(v => ({
-                severity: v.severity || 'HIGH',
-                type: v.type || 'CloudMisconfiguration',
+        const violations = json?.violations || [];
+
+        if (violations.length > 0) {
+            statusEl.textContent = `✅ Analysis complete — ${violations.length} issues found`;
+            statusEl.className = 'config-status warning';
+
+            renderAlerts(violations.map(v => ({
                 title: v.title,
-                message: v.message,
-                alert_level: v.severity === 'CRITICAL' ? '🚨 CRITICAL ALERT' : (v.severity === 'HIGH' ? '⚠️ HIGH ALERT' : 'ℹ️ INFO')
-            }));
-            
-            if (alerts.length > 0) {
-                renderAlerts(alerts, { total: n, critical: alerts.filter(a => a.severity === 'CRITICAL').length, high: alerts.filter(a => a.severity === 'HIGH').length });
-            } else {
-                renderAlerts([], { total: 0 });
-            }
-            
+                severity: v.severity,
+                description: v.description || v.message
+            })));
+
+            console.log("Findings sent to AI:", violations);
+            runAIAnalysis(violations);
+
             showPipelineDone();
-            showToast(`Config analyzed: ${n} issues`, n > 0 ? 'warning' : 'success');
-            addSocEvent(n > 0 ? 'WARNING' : 'INFO', `Config scan: ${n} issues found.`);
+            showToast(`Config analyzed: ${violations.length} issues`, 'warning');
+            addSocEvent('WARNING', `Config scan: ${violations.length} issues found.`);
+        } else {
+            statusEl.textContent = '✅ Analysis complete — 0 issues found';
+            statusEl.className = 'config-status success';
+            renderAlerts([]);
+            showPipelineDone();
+            showToast('No misconfigurations found', 'success');
+            addSocEvent('INFO', 'Config scan clean: 0 issues found');
         }
     } catch (e) {
         statusEl.textContent = `❌ Connection failed: ${e.message}`;
