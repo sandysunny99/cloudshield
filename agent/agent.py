@@ -16,7 +16,15 @@ API_URL = os.environ.get("CLOUDSHIELD_API_URL", "https://cloudshield-tya3.onrend
 parsed_url = urlparse(API_URL)
 API_PATH = parsed_url.path
 AGENT_KEY = os.environ.get("AGENT_KEY", "default-agent-key-123")
-AGENT_ID = str(uuid.uuid4())
+
+def get_persistent_agent_id():
+    try:
+        mac = str(uuid.getnode())
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, mac))
+    except:
+        return str(uuid.uuid4())
+
+AGENT_ID = get_persistent_agent_id()
 AGENT_VERSION = "2.0.0-EDR-PRO"
 BASE_SYNC_INTERVAL = 30
 TRIVY_INTERVAL = 1200 # 20 minutes

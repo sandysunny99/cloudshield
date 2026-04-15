@@ -247,11 +247,23 @@ window.exportReport = async function() {
         const events = sr.status === 'fulfilled' ? sr.value.events : [];
         const history = getScanHistory().map(h => ({ timestamp:h.timestamp, risk:h.risk, findings_count:h.findingsCount }));
 
+        const activeAgent = agents && agents.length > 0 ? agents[0] : null;
+        let primaryIp = 'Unknown';
+        if (activeAgent && activeAgent.open_ports && activeAgent.open_ports.length > 0) {
+            primaryIp = activeAgent.open_ports[0].ip === '::' ? '127.0.0.1' : activeAgent.open_ports[0].ip;
+        }
+
         const safeData = {
+            target_info: {
+                hostname: activeAgent ? activeAgent.hostname : "Unknown",
+                ip_address: primaryIp,
+                timestamp: new Date().toISOString(),
+                agent_version: activeAgent ? activeAgent.agentVersion : "N/A"
+            },
+            history: history || [],
             agents: agents || [],
             metrics: metrics || {},
-            events: events || [],
-            history: history || []
+            events: events || []
         };
 
         const blob = new Blob([JSON.stringify(safeData, null, 2)], { type: 'application/json' });
