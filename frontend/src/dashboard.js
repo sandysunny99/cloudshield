@@ -1,6 +1,6 @@
 /* CloudShield Dashboard v3 — SaaS Production */
 
-const API_BASE = 'https://cloudshield-tya3.onrender.com';
+const API_BASE = window.location.origin.includes('localhost') ? 'http://localhost:5000' : 'https://cloudshield-tya3.onrender.com';
 
 // ── Severity / Source colours ──
 const SEVERITY_COLORS = { CRITICAL:'#ef4444', HIGH:'#f97316', MEDIUM:'#eab308', LOW:'#22c55e' };

@@ -316,9 +316,13 @@ def create_app():
         if request.content_length and request.content_length > 512 * 1024:
             return jsonify({"status": "error", "message": "Payload too large"}), 413
 
-        # Security Key Rotation Logic
-        agent_keys_env = os.environ.get("AGENT_KEYS", "default-agent-key-123")
-        active_keys = [k.strip() for k in agent_keys_env.split(',')]
+        # Security Key Rotation Logic (STRICT SaaS MODE)
+        agent_keys_env = os.environ.get("AGENT_KEYS")
+        if not agent_keys_env:
+            # If no keys configured, reject all (Security-First)
+            return jsonify({"status": "error", "message": "No AGENT_KEYS configured on server. Auth rejected."}), 403
+            
+        active_keys = [k.strip() for k in agent_keys_env.split(',') if k.strip()]
         
         provided_signature = request.headers.get("x-agent-signature")
         ts = request.headers.get("x-agent-timestamp")
@@ -683,40 +687,21 @@ def create_app():
 
     @app.route("/api/download-agent", methods=["GET"])
     def api_download_agent():
-        """Serve the packaged CloudShield agent executable."""
-        from flask import send_file, redirect
-        import pathlib
-
-        # Look for precompiled exe first (built via PyInstaller)
-        agent_exe = os.path.join(os.path.dirname(__file__), "dist", "cloudshield-agent.exe")
-        if os.path.exists(agent_exe):
-            return send_file(
-                agent_exe,
-                mimetype="application/octet-stream",
-                as_attachment=True,
-                download_name="cloudshield-agent.exe"
-            )
-
-        # If not compiled yet, serve the raw Python agent script
-        agent_py = os.path.join(os.path.dirname(__file__), "..", "agent", "agent.py")
-        agent_py = str(pathlib.Path(agent_py).resolve())
-        if os.path.exists(agent_py):
-            return send_file(
-                agent_py,
-                mimetype="text/x-python",
-                as_attachment=True,
-                download_name="cloudshield-agent.py"
-            )
-
-        return jsonify({"status": "error", "message": "Agent binary not available yet"}), 404
+        """Redirect to the latest CloudShield agent release on GitHub."""
+        from flask import redirect
+        # SaaS Best Practice: Redirect to official release asset
+        release_url = "https://github.com/sandysunny99/cloudshield/releases/latest/download/cloudshield-agent.exe"
+        return redirect(release_url)
 
     @app.route("/api/agent-keys", methods=["GET"])
     def api_agent_keys():
-        """Return a demo API key for display in the Deploy Agent modal."""
-        # In production, this would be per-user auth. For now return the env key.
-        agent_keys_env = os.environ.get("AGENT_KEYS", "default-agent-key-123")
+        """Return primary API key for display in the Deploy Agent modal."""
+        agent_keys_env = os.environ.get("AGENT_KEYS")
+        if not agent_keys_env:
+            return jsonify({"status": "error", "message": "No keys configured"}), 404
+            
         primary_key = agent_keys_env.split(',')[0].strip()
-        backend_url = os.environ.get("CLOUDSHIELD_API_URL", "https://cloudshield-tya3.onrender.com")
+        backend_url = os.environ.get("CLOUDSHIELD_API_URL", "http://localhost:5000")
         download_url = f"{backend_url}/api/download-agent"
         return jsonify({
             "status": "success",

@@ -21,7 +21,7 @@ def parse_args():
     return parser.parse_args()
 
 args = parse_args()
-api_key = args.key
+api_key = args.key or os.environ.get("CLOUDSHIELD_API_KEY")
 
 if not api_key:
     try:
@@ -35,13 +35,17 @@ if not api_key:
             root.withdraw()
             root.attributes('-topmost', True)
             api_key = simpledialog.askstring("CloudShield Agent", "Enter CloudShield API Key:", parent=root)
-            if not api_key:
-                sys.exit(0)
         except ImportError:
+            print("[-] API Key required. Terminating.")
             sys.exit(1)
 
+if not api_key:
+    print("[-] API Key required. Terminating.")
+    sys.exit(1)
+
 # Configuration
-API_URL = os.environ.get("CLOUDSHIELD_API_URL", "https://cloudshield-tya3.onrender.com/api/agent-scan")
+# Default to localhost for easier local development/testing
+API_URL = os.environ.get("CLOUDSHIELD_API_URL", "http://localhost:5000/api/agent-scan")
 parsed_url = urlparse(API_URL)
 API_PATH = parsed_url.path
 AGENT_KEY = api_key
