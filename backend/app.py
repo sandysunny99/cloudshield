@@ -1012,6 +1012,77 @@ def create_app():
         score_data = compute_risk_scores(total_vulns)
         return jsonify({"status": "success", "data": score_data})
 
+
+    @app.route("/api/dashboard-summary", methods=["GET"])
+    def api_dashboard_summary():
+        """Lightweight consolidated endpoint for dashboard telemetry (<100KB)."""
+        try:
+            # 1. Agent Status (Limit to top 20 for payload size)
+            agents = []
+            now = time.time()
+            all_agents = list(AGENT_CACHE.items())
+            all_agents.sort(key=lambda x: x[1]['timestamp'], reverse=True)
+            
+            for a_id, entry in all_agents[:20]:
+                time_diff = now - entry["timestamp"]
+                if time_diff > 300: continue
+                status = "online" if time_diff <= 60 else ("stale" if time_diff <= 180 else "offline")
+                agent_data = dict(entry["data"])
+                agent_data["connection_status"] = status
+                agent_data["last_seen_seconds_ago"] = round(time_diff, 1)
+                agent_data["healthScore"] = round(100 - min(100, (time_diff/60)*10))
+                # Prune large fields if any
+                if "vulnerabilities" in agent_data and len(agent_data["vulnerabilities"]) > 5:
+                    agent_data["vulnerabilities"] = agent_data["vulnerabilities"][:5]
+                agents.append(agent_data)
+
+            # 2. Security Metrics
+            active_blocks = []
+            for ip, data in list(BLOCKED_IPS.items())[:10]:
+                active_blocks.append({
+                    "ip": ip, 
+                    "time_remaining_seconds": max(0, int(data.get("expires_at", now) - now))
+                })
+            
+            # 3. Global Risk Score
+            total_vulns = []
+            for a in agents: 
+                total_vulns.extend(a.get("vulnerabilities", []))
+            
+            from risk_engine import compute_risk_scores
+            risk_data = compute_risk_scores(total_vulns)
+
+            # 4. Recent Alerts (Limit to top 10)
+            from services import alert_service
+            alerts = alert_service.get_recent_alerts()[:10]
+
+            # 5. Deployment Keys (For modal)
+            agent_keys_env = os.environ.get("AGENT_KEYS", "")
+            primary_key = agent_keys_env.split(',')[0].strip() if agent_keys_env else "N/A"
+
+            return jsonify({
+                "status": "success",
+                "data": {
+                    "agents": agents,
+                    "metrics": {
+                        "total_blocked": len(BLOCKED_IPS),
+                        "attack_rate": len([t for t in ATTACK_TRACKER.get("rate_window", []) if now - t < 60]),
+                        "peak_attack_rate": ATTACK_TRACKER.get("peak_rate", 0),
+                        "blocked_ips": active_blocks
+                    },
+                    "risk": risk_data,
+                    "alerts": alerts,
+                    "soc_timeline": SOC_TIMELINE[:10],
+                    "deploy": {
+                        "api_key": primary_key,
+                        "download_url": f"{os.environ.get('CLOUDSHIELD_API_URL', 'http://localhost:5000')}/api/download-agent"
+                    }
+                }
+            })
+        except Exception as e:
+            print(f"Dashboard summary error: {e}")
+            return jsonify({"status": "error", "message": "Failed to generate summary"}), 500
+
     return app
 
 

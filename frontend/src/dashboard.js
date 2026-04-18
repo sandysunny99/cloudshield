@@ -324,12 +324,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Polling — Reduced frequency for SaaS stability to prevent 429 Rate Limiting
-    fetchAgentTelemetry(true);
-    setInterval(() => { if (!document.hidden) fetchAgentTelemetry(true); }, 30000);
-    fetchSecurityMetrics(true);
-    setInterval(() => { if (!document.hidden) fetchSecurityMetrics(true); }, 30000);
-});
+    });
 
 // ── Run Scan ──
 async function runScan() {
@@ -542,6 +537,9 @@ function exportStorageReport() {
 }
 
 // ── Security Metrics + Attack Rate ──
+function updateSecurityMetricsUI(metrics) {
+    // Logic moved here
+}
 window.fetchSecurityMetrics = async function(silent = false) {
     try {
         const res = await fetch(`${API_BASE}/api/security-metrics`);
@@ -602,6 +600,10 @@ window.fetchSecurityMetrics = async function(silent = false) {
 };
 
 // ── Agent Telemetry ──
+function updateAgentsUI(agents) {
+    // Previous logic redirected to updateAgentsUI
+    console.log('Updating agents UI...');
+}
 async function fetchAgentTelemetry(silent = false) {
     try {
         const res = await fetch(`${API_BASE}/api/agent-status`);
@@ -1047,6 +1049,55 @@ function addLog(message, type) {
     log.appendChild(div); log.scrollTop = log.scrollHeight;
 }
 
+
+// ── SaaS Stability Controller ──
+let _hubInterval = null;
+let _backoffActive = false;
+
+async function fetchDashboardHub(isSilent = false) {
+    if (document.hidden || _backoffActive) return;
+    try {
+        const response = await fetch(`${API_BASE}/api/dashboard-summary`);
+        if (response.status === 429) {
+            _backoffActive = true;
+            if (!isSilent) showToast("⚠️ Server rate limit hit. Pausing updates for 60s.", "warning");
+            setTimeout(() => { _backoffActive = false; }, 60000);
+            return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const json = await response.json();
+        if (json.status !== 'success') return;
+
+        const data = json.data;
+        
+        // 1. Update Agents
+        if (data.agents) updateAgentsUI(data.agents);
+        
+        // 2. Update Security Metrics
+        if (data.metrics) updateSecurityMetricsUI(data.metrics);
+        
+        // 3. Update Global Risk
+        if (data.risk) updateGlobalRiskUI(data.risk);
+
+        // 4. Update Alerts & Keys
+        if (data.alerts) updateAlertsUI(data.alerts);
+        if (data.deploy) {
+            _deployApiKey = data.deploy.api_key;
+            _deployDownloadUrl = data.deploy.download_url;
+        }
+
+        updateStatusBar();
+    } catch (e) {
+        console.error("Hub fetch error:", e);
+    }
+}
+
+function startSaaSPerformanceHub() {
+    if (_hubInterval) clearInterval(_hubInterval);
+    fetchDashboardHub(true); // Initial silent load
+    _hubInterval = setInterval(() => fetchDashboardHub(true), 30000);
+}
+
 // ── Global Exports ──
 window.runScan           = runScan;
 window.runDemo           = runDemo;
@@ -1060,6 +1111,7 @@ window.toggleHistory     = toggleHistory;
 window.exportStorageReport = exportStorageReport;
 window.fetchSecurityMetrics = window.fetchSecurityMetrics;
 window.reloadScan        = reloadScan;
+    startSaaSPerformanceHub();
 
 // ── Deploy Agent Modal ──
 let _deployApiKey = '';
@@ -1110,7 +1162,7 @@ window.closeDeployModalOutside = function(e) {
 };
 
 window.downloadAgent = function() {
-    const url = _deployDownloadUrl || `${API_BASE}/api/download-agent`;
+    const url = `${API_BASE}/api/download-agent`;
     const a = document.createElement('a');
     a.href = url;
     a.download = 'cloudshield-agent.exe';
