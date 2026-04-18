@@ -324,11 +324,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Polling — guarded by document.hidden
-    fetchAgentTelemetry();
-    setInterval(() => { if (!document.hidden) fetchAgentTelemetry(); }, 10000);
-    fetchSecurityMetrics();
-    setInterval(() => { if (!document.hidden) fetchSecurityMetrics(); }, 10000);
+    // Polling — Reduced frequency for SaaS stability to prevent 429 Rate Limiting
+    fetchAgentTelemetry(true);
+    setInterval(() => { if (!document.hidden) fetchAgentTelemetry(true); }, 30000);
+    fetchSecurityMetrics(true);
+    setInterval(() => { if (!document.hidden) fetchSecurityMetrics(true); }, 30000);
 });
 
 // ── Run Scan ──
@@ -542,13 +542,13 @@ function exportStorageReport() {
 }
 
 // ── Security Metrics + Attack Rate ──
-window.fetchSecurityMetrics = async function() {
+window.fetchSecurityMetrics = async function(silent = false) {
     try {
         const res = await fetch(`${API_BASE}/api/security-metrics`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
         if (!json || json.status !== 'success') {
-            showToast("❌ Failed to load data", "error");
+            if (!silent) showToast("❌ Failed to load metrics", "error");
             return;
         }
         const m = json.metrics || {};
@@ -597,18 +597,18 @@ window.fetchSecurityMetrics = async function() {
 
         updateStatusBar();
     } catch (e) {
-        showToast("❌ Something went wrong", "error");
+        if (!silent) showToast("❌ Security metrics unavailable", "error");
     }
 };
 
 // ── Agent Telemetry ──
-async function fetchAgentTelemetry() {
+async function fetchAgentTelemetry(silent = false) {
     try {
         const res = await fetch(`${API_BASE}/api/agent-status`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
         if (!json || json.status !== 'success') {
-            showToast("❌ Failed to load data", "error");
+            if (!silent) showToast("❌ Failed to load metrics", "error");
             return;
         }
 
@@ -743,7 +743,7 @@ async function fetchAgentTelemetry() {
 
         updateStatusBar();
     } catch (e) {
-        showToast("❌ Something went wrong", "error");
+        if (!silent) showToast("❌ Agent telemetry unavailable", "error");
     }
 }
 
