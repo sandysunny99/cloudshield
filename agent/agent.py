@@ -26,7 +26,7 @@ api_key = args.key or os.environ.get("CLOUDSHIELD_API_KEY")
 if not api_key:
     try:
         api_key = input("Enter CloudShield API Key: ").strip()
-    except (EOFError, OSError):
+    except (EOFError, OSError, RuntimeError):
         # Fallback if running with --noconsole
         try:
             import tkinter as tk

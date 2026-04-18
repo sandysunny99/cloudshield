@@ -1,57 +1,80 @@
-# CloudShield Architecture 🏗️
+# CloudShield Architecture
 
-CloudShield is built on a modular, service-oriented architecture designed for maximum resilience and transparency.
+CloudShield leverages a distributed Edge-to-Cloud architecture mapping remote system states into an aggregated global risk platform.
 
-## System Overview
+## Architecture Diagram
 
 ```mermaid
 graph TD
-    User[Web User] --> Frontend[Vite/Vanilla JS Dashboard]
-    Frontend --> Backend[Flask API Orchestrator]
-    
-    subgraph "Core Security Services"
-        Backend --> Trivy[Trivy CLI Wrapper]
-        Backend --> OPA[OPA REST API / Built-in Fallback]
-        Backend --> AI[OpenAI / Rule-based Synthesis]
+    %% Define Edge Devices
+    subgraph Edge Layer [1. Edge Layer]
+        A1[Agent 1: Windows Client]
+        A2[Agent 2: Linux Server]
+        A3[Agent 3: Storage Node]
     end
-    
-    subgraph "Storage & Visibility"
-        Backend --> DB[(MongoDB / In-Memory)]
-        Backend --> CSP[Cloud Provider Probers]
+
+    %% Define Network Edge
+    subgraph Network Security
+        WAF[Cloudflare WAF Edge]
     end
+
+    %% Define Cloud SaaS Backend
+    subgraph Backend Services [2. Render Backend Environment]
+        API[Flask Gateway API]
+        Auth[HMAC Validator]
+        Risk[Risk & Telemetry Engine]
+        DB[(PostgreSQL Database)]
+    end
+
+    %% Define Web Dashboard
+    subgraph Presentation [3. Vercel Frontend]
+        Vite[Vite Dashboard UI]
+        Metrics[Metrics Polling Hub]
+    end
+
+    %% Routing Flow
+    A1 -- "Encrypted Telemetry JSON\n(x-agent-signature)" --> WAF
+    A2 -- "Encrypted Telemetry JSON\n(x-agent-signature)" --> WAF
+    A3 -- "Encrypted Telemetry JSON\n(x-agent-signature)" --> WAF
+
+    %% WAF Pass-through
+    WAF -- "Valid IP & Requests" --> API
+
+    %% Inner Backend Logic
+    API --> Auth
+    Auth -- "Pass" --> Risk
+    Auth -- "Fail (5 Attempts)" --> WAF_BAN[WAF Ban Instruction]
+    WAF_BAN -. "API Update" .-> WAF
     
-    Agent[EDR Agent] --> Backend
+    Risk --> DB
+    
+    %% Dashboard Flow
+    Metrics -- "/api/dashboard-summary\n(Every 30s)" --> API
+    Vite <--> Metrics
+    API <--> DB
+
+    classDef default fill:#1e1e2e,stroke:#313244,stroke-width:2px,color:#cdd6f4;
+    classDef edgeObject fill:#11111b,stroke:#89b4fa,stroke-width:2px,color:#89b4fa;
+    classDef databaseNode fill:#11111b,stroke:#a6e3a1,stroke-width:2px,color:#a6e3a1;
+    classDef ui fill:#11111b,stroke:#f9e2af,stroke-width:2px,color:#f9e2af;
+    
+    class A1,A2,A3 edgeObject;
+    class DB databaseNode;
+    class Vite,Metrics ui;
 ```
 
-## "Never Falter" Design Principle
+## System Flow
 
-A critical feature of CloudShield is its ability to operate under failure conditions without returning HTTP 500 errors.
+### Remote Endpoint Execution
+1. **Agent Execution**: The user launches the standalone `.exe` or `python agent.py` loop. It begins harvesting Trivy CVEs, CPU metrics, and open ports.
+2. **Cryptographic Sealing**: The agent uses physical API keys to hash the payload signature. 
+3. **Transmission**: The payload transits to `/api/agent-scan` externally over standard HTTPS REST.
 
-- **Vulnerability Scanning**: If the `trivy` binary is missing, the system auto-activates a simulated fallback mode to ensure the UI remains interactive.
-- **Policy Evaluation**: If the OPA server (`:8181`) is unreachable, a built-in Python rule engine (mirroring the Rego policies) takes over.
-- **AI Analysis**: If the OpenAI API key is missing or the service is down, a deterministic narrative engine generates risk summaries from the findings.
-- **Persistence**: If MongoDB is unreachable, the system transparently switches to an in-memory storage array.
+### Cloud Receiving & Security Routing
+1. **Cloudflare**: Incoming traffic checks WAF policies and stops DoS routing.
+2. **Backend Interception**: Flask captures the packet. `handle_failed_auth()` executes via HMAC. Invalid keys > 5 trigger a massive fallback ban via Edge networking API.
+3. **Database Sink**: Valid data uses `SQLAlchemy` mapping. `Agent` tables are safely `UPSERT`-ed, capturing immediate state and resetting the `last_seen` timestamp. 
 
-## Component Breakdown
-
-### 1. Frontend (Dashboard)
-- **Technology**: Vanilla JavaScript, Vite, Chart.js.
-- **Logic**: Communicates with the Backend API via asynchronous fetch calls. Dynamically adjusts its reporting target (`localhost` vs `production`) based on the environment.
-
-### 2. Backend (Orchestration)
-- **Technology**: Flask (Python 3.12+).
-- **Responsibility**: Routes external requests, manages the security scan pipeline, and aggregates findings from multiple sources into a unified risk report.
-
-### 3. Service Layer
-- **DB Service**: Manages MongoDB interactions and fallback logic.
-- **AI Service**: Handles prompt engineering and LLM lifecycle.
-- **Trivy/OPA Services**: Interface with security tools and parse raw output into a standard finding schema.
-
-## Data Flow
-
-1. **Trigger**: User inputs an image name or cloud config.
-2. **Scan**: Backend invokes the relevant service (Trivy or OPA).
-3. **Parse**: Raw findings are normalized into a standard "Finding" object (ID, Title, Severity, Source).
-4. **Enrich**: The AI Service provides a natural language risk narrative.
-5. **Persist**: Results are saved to MongoDB.
-6. **Return**: The UI displays the enriched, aggregated report.
+### Web Aggregation
+1. **Frontend Hub**: `dashboard.js` loops an infinite poll grabbing `/api/dashboard-summary` safely capturing total global state locally at an interval rate logic handling 429 back-offs manually.
+2. **Agent Pruning**: Background Flask threads ensure any Agent breaching more than a 60 second lag falls to "offline". Any dead agent lagging more than 300 seconds is strictly removed out of the system state (`SQLAlchemy Delete`).

@@ -45,6 +45,7 @@ from remediation import generate_remediations
 from compliance import map_compliance, get_compliance_summary
 from scanner import parse_trivy_output, get_scan_summary
 from services.storage_service import check_storage_public
+from database import db, Agent, FailedAuth, BlockedIP, AttackMetric
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "results_cache.json")
 CACHE_TTL = 300  # 5 minutes
@@ -54,6 +55,14 @@ SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "sample_data")
 
 def create_app():
     app = Flask(__name__)
+
+    # Database setup
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///cloudshield.db')
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    db.init_app(app)
+    
+    with app.app_context():
+        db.create_all()
 
     # ── CORS Hardening: explicit allow-list ──
     _cors_default = "http://localhost:5173,https://cloudshield-vtah.vercel.app"
@@ -133,12 +142,7 @@ def create_app():
         return jsonify({"status": "no_data", "data": None})
 
     # ── NEW: Real-Time System Agent Endpoints ──
-    AGENT_CACHE = {}
     NONCE_CACHE = {} # map nonce -> expiry_timestamp
-    
-    # Cloudflare Auto-Block Tracking
-    FAILED_AUTH_TRACKER = {}  # { ip: { "count": int, "first_attempt": timestamp } }
-    BLOCKED_IPS = {}          # { ip: { "rule_id": str, "banned_at": ts, "expires_at": ts } }
     
     CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
     CF_ZONE_ID = os.environ.get("CF_ZONE_ID")
@@ -146,31 +150,40 @@ def create_app():
     SAFE_IPS = [ip.strip() for ip in os.environ.get("SAFE_IPS", "").split(",") if ip.strip()]
 
     def _cleanup_expired_bans():
-        while True:
-            time.sleep(60)
-            now = time.time()
-            expired = []
-            for ip, data in list(BLOCKED_IPS.items()):
-                if now > data["expires_at"]:
-                    expired.append((ip, data["rule_id"]))
-            
-            for ip, rule_id in expired:
-                if rule_id and CF_API_TOKEN and CF_ZONE_ID:
-                    print(f"[SECURITY] Unblocking IP {ip} (Ban expired)")
-                    url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/firewall/access_rules/rules/{rule_id}"
-                    headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
-                    try:
-                        res = requests.delete(url, headers=headers, timeout=5)
-                        if res.status_code == 200:
-                            print(f"[CF-API] Lifted block for {ip}")
-                        else:
-                            print(f"[CF-API] Failed to lift block for {ip} - {res.status_code}")
-                    except Exception as e:
-                        print(f"[CF-API] Failed targeting Edge API: {str(e)}")
+        with app.app_context():
+            while True:
+                time.sleep(60)
+                now = time.time()
+                try:
+                    expired = BlockedIP.query.filter(BlockedIP.expires_at < now).all()
+                except Exception:
+                    continue  # Wait for db init
                 
-                # Cleanup local maps
-                if ip in BLOCKED_IPS: del BLOCKED_IPS[ip]
-                if ip in FAILED_AUTH_TRACKER: del FAILED_AUTH_TRACKER[ip]
+                for b in expired:
+                    if b.rule_id and CF_API_TOKEN and CF_ZONE_ID:
+                        print(f"[SECURITY] Unblocking IP {b.ip} (Ban expired)")
+                        url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/firewall/access_rules/rules/{b.rule_id}"
+                        headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
+                        try:
+                            res = requests.delete(url, headers=headers, timeout=5)
+                            if res.status_code == 200:
+                                print(f"[CF-API] Lifted block for {b.ip}")
+                            else:
+                                print(f"[CF-API] Failed to lift block for {b.ip} - {res.status_code}")
+                        except Exception as e:
+                            print(f"[CF-API] Failed targeting Edge API: {str(e)}")
+                    
+                    # Cleanup local DB
+                    db.session.delete(b)
+                    fa = FailedAuth.query.get(b.ip)
+                    if fa:
+                        db.session.delete(fa)
+                        
+                if expired:
+                    try:
+                        db.session.commit()
+                    except:
+                        db.session.rollback()
 
     # Start cleanup thread
     threading.Thread(target=_cleanup_expired_bans, daemon=True).start()
@@ -203,8 +216,12 @@ def create_app():
                 if res.status_code == 200:
                     data = res.json()
                     rule_id = data.get("result", {}).get("id")
-                    if rule_id and ip in BLOCKED_IPS:
-                        BLOCKED_IPS[ip]["rule_id"] = rule_id
+                    if rule_id:
+                        with app.app_context():
+                            b = BlockedIP.query.get(ip)
+                            if b:
+                                b.rule_id = rule_id
+                                db.session.commit()
                     print(f"[SECURITY][SUCCESS] Edge block applied successfully for IP: {ip} (Rule: {rule_id})")
                 else:
                     print(f"[SECURITY][ERROR] Failed to block IP at Edge: {res.status_code} - {res.text}")
@@ -219,60 +236,59 @@ def create_app():
             print(f"[SECURITY][INFO] Failed auth from SAFE_IP: {ip}. Ignoring.")
             return
             
-        if ip in BLOCKED_IPS:
-            return  # Already blocked
-
         now = time.time()
-        record = FAILED_AUTH_TRACKER.get(ip, {"count": 0, "first_attempt": now})
+        fa = FailedAuth.query.get(ip)
+        if not fa:
+            fa = FailedAuth(ip=ip, count=0, first_attempt=now)
+            db.session.add(fa)
         
         # Reset counter after 5 minutes
-        if now - record["first_attempt"] > 300:
-            record["count"] = 0
-            record["first_attempt"] = now
+        if now - fa.first_attempt > 300:
+            fa.count = 0
+            fa.first_attempt = now
             
-        record["count"] += 1
-        FAILED_AUTH_TRACKER[ip] = record
+        fa.count += 1
+        db.session.commit()
         
-        print(f"[SECURITY][FAILED_AUTH] IP={ip} Attempts={record['count']}/5")
-        add_soc_event("WARNING", f"Bad auth attempt from {ip} — attempt {record['count']}/5")
+        print(f"[SECURITY][FAILED_AUTH] IP={ip} Attempts={fa.count}/5")
+        add_soc_event("WARNING", f"Bad auth attempt from {ip} — attempt {fa.count}/5")
 
-        # Track attack rate (rolling 60-second window)
-        now_ts = time.time()
-        ATTACK_TRACKER["rate_window"].append(now_ts)
-        ATTACK_TRACKER["rate_window"] = [
-            t for t in ATTACK_TRACKER["rate_window"] if now_ts - t < 60
-        ]
-        current_rate = len(ATTACK_TRACKER["rate_window"])
-        if current_rate > ATTACK_TRACKER["peak_rate"]:
-            ATTACK_TRACKER["peak_rate"] = current_rate
+        # Track attack rate
+        ATTACK_TRACKER["rate_window"].append(now)
+        ATTACK_TRACKER["rate_window"] = [t for t in ATTACK_TRACKER["rate_window"] if now - t < 60]
+        cur_rate = len(ATTACK_TRACKER["rate_window"])
+        if cur_rate > ATTACK_TRACKER["peak_rate"]:
+            ATTACK_TRACKER["peak_rate"] = cur_rate
 
-        if record["count"] >= 5 and ip not in BLOCKED_IPS:
-            print(f"[CRITICAL] Blocking IP {ip} after 5 failed auth attempts")
-            now = time.time()
-            BLOCKED_IPS[ip] = {"rule_id": None, "banned_at": now, "expires_at": now + 3600}
-            add_soc_event("CRITICAL", f"IP {ip} auto-blocked for repeated spoofing (5 failed auth attempts).")
-            block_ip_in_cloudflare(ip)
+        if fa.count >= 5:
+            existing_block = BlockedIP.query.get(ip)
+            if not existing_block:
+                print(f"[CRITICAL] Blocking IP {ip} after 5 failed auth attempts")
+                new_block = BlockedIP(ip=ip, rule_id=None, banned_at=now, expires_at=now + 3600)
+                db.session.add(new_block)
+                db.session.commit()
+                add_soc_event("CRITICAL", f"IP {ip} auto-blocked for repeated spoofing (5 failed auth attempts).")
+                block_ip_in_cloudflare(ip)
 
     @app.route("/api/security-metrics", methods=["GET"])
     def api_security_metrics():
         try:
             now = time.time()
             active_blocks = []
-            for ip, data in BLOCKED_IPS.items():
+            for b in BlockedIP.query.all():
                 active_blocks.append({
-                    "ip": ip,
-                    "time_remaining_seconds": max(0, int(data.get("expires_at", now) - now)),
-                    "rule_id": data.get("rule_id")
+                    "ip": b.ip,
+                    "time_remaining_seconds": max(0, int(b.expires_at - now)),
+                    "rule_id": b.rule_id
                 })
 
             attacks = []
-            for ip, tr in FAILED_AUTH_TRACKER.items():
-                if tr.get("count", 0) > 0:
-                    attacks.append({
-                        "ip": ip,
-                        "attempts": tr.get("count", 0),
-                        "first_attempt": tr.get("first_attempt", now)
-                    })
+            for tr in FailedAuth.query.filter(FailedAuth.count > 0).all():
+                attacks.append({
+                    "ip": tr.ip,
+                    "attempts": tr.count,
+                    "first_attempt": tr.first_attempt
+                })
 
             # Compute current attack rate (rolling 60s window)
             ATTACK_TRACKER["rate_window"] = [
@@ -401,28 +417,37 @@ def create_app():
             payload["risk_breakdown"] = {"system": sys_risk, "network": net_risk, "cve": cve_risk}
             payload["priorityFix"] = priority_fix
 
-            # Store in global cache with timestamp
-            AGENT_CACHE[agent_id] = {
-                "timestamp": time.time(),
-                "data": payload
-            }
+            # Store in database
+            agent = Agent.query.get(agent_id)
+            if not agent:
+                agent = Agent(agent_id=agent_id)
+                db.session.add(agent)
+                
+            agent.hostname = payload.get("hostname", "unknown")
+            agent.cpu = float(payload.get("cpu_percent", 0.0))
+            agent.ram = float(payload.get("ram_percent", 0.0))
+            agent.last_seen = time.time()
+            agent.status = "online"
+            agent.set_data(payload)
+            
+            db.session.commit()
             
             return jsonify({"status": "success", "message": "Telemetry received"})
-        except Exception:
+        except Exception as e:
+            print(f"Error processing agent scan: {e}")
+            db.session.rollback()
             return jsonify({"status": "error", "message": "Server processing error"}), 500
 
     @app.route("/api/agent-status", methods=["GET"])
     def api_agent_status():
-        # Return all active agents instead of just one
         agents = []
         now = time.time()
-        dead_agents = []
         
-        for a_id, entry in AGENT_CACHE.items():
-            time_diff = now - entry["timestamp"]
+        for agent in Agent.query.all():
+            time_diff = now - agent.last_seen
             
-            if time_diff > 300: # TTL 5 minutes to fully drop
-                dead_agents.append(a_id)
+            if time_diff > 300: # TTL 5 minutes to drop
+                db.session.delete(agent)
                 continue
                 
             if time_diff <= 60:
@@ -432,17 +457,15 @@ def create_app():
             else:
                 status = "offline"
                 
-            agent_data = dict(entry["data"])
+            agent_data = agent.get_data()
             agent_data["connection_status"] = status
             agent_data["last_seen_seconds_ago"] = round(time_diff, 1)
-            # Add health score based on time and metrics
             health = 100 - min(100, (time_diff/60)*10)
             agent_data["healthScore"] = round(health)
             
             agents.append(agent_data)
             
-        for a_id in dead_agents:
-            del AGENT_CACHE[a_id]
+        db.session.commit()
             
         return jsonify({
             "status": "success",
@@ -459,11 +482,8 @@ def create_app():
 
             if not config and not image and not trivy_output:
                 now = time.time()
-                active_agent = None
-                for a_id, entry in AGENT_CACHE.items():
-                    if now - entry["timestamp"] <= 180:
-                        active_agent = entry["data"]
-                        break
+                db_agent = next((a for a in Agent.query.all() if now - a.last_seen <= 180), None)
+                active_agent = db_agent.get_data() if db_agent else None
                 
                 if active_agent:
                     findings = []
@@ -984,21 +1004,24 @@ def create_app():
         data = request.get_json(silent=True) or {}
         agent_id = data.get("agentId", "unknown")
         
-        # We can store this in the AGENT_CACHE or MongoDB
-        try:
-            db_service.db.agent_reports.insert_one({
-                "agent_id": agent_id,
-                "timestamp": datetime.utcnow(),
-                "data": data
-            })
-        except Exception:
-            pass # fallback to memory
+        # We store this in the Persistent DB
+        agent = Agent.query.get(agent_id)
+        if not agent:
+            agent = Agent(agent_id=agent_id)
+            db.session.add(agent)
             
-        AGENT_CACHE[agent_id] = {
-            "timestamp": time.time(),
-            "data": data,
-            "ip": request.remote_addr
-        }
+        agent.hostname = data.get("hostname", "unknown")
+        agent.cpu = float(data.get("cpu_percent", 0.0))
+        agent.ram = float(data.get("ram_percent", 0.0))
+        agent.last_seen = time.time()
+        agent.status = "online"
+        
+        # Merge existing data
+        existing = agent.get_data()
+        existing.update(data)
+        existing["ip"] = request.remote_addr
+        agent.set_data(existing)
+        db.session.commit()
         
         # Analyze risk of the immediate vulnerabilities posted by the agent
         vulns = data.get("vulnerabilities", [])
@@ -1011,10 +1034,11 @@ def create_app():
     @app.route("/api/risk/score", methods=["GET"])
     def api_risk_score():
         """Returns global aggregated risk score from recent findings."""
-        # Simple aggregated demo calculation: pulling from AGENT_CACHE
+        # Pulling from DB
         total_vulns = []
-        for agent in AGENT_CACHE.values():
-            total_vulns.extend(agent["data"].get("vulnerabilities", []))
+        now = time.time()
+        for agent in Agent.query.filter(Agent.last_seen > now - 300).all():
+            total_vulns.extend(agent.get_data().get("vulnerabilities", []))
             
         from risk_engine import compute_risk_scores
         score_data = compute_risk_scores(total_vulns)
@@ -1039,13 +1063,11 @@ def create_app():
 
         # 1. Agents
         try:
-            all_agents = list(AGENT_CACHE.items())
-            all_agents.sort(key=lambda x: x[1]['timestamp'], reverse=True)
-            for a_id, entry in all_agents[:20]:
-                time_diff = now - entry["timestamp"]
-                if time_diff > 300: continue
+            all_agents = Agent.query.filter(Agent.last_seen > now - 300).order_by(Agent.last_seen.desc()).limit(20).all()
+            for agent in all_agents:
+                time_diff = now - agent.last_seen
                 status = "online" if time_diff <= 60 else ("stale" if time_diff <= 180 else "offline")
-                agent_data = dict(entry["data"])
+                agent_data = agent.get_data()
                 agent_data["connection_status"] = status
                 agent_data["last_seen_seconds_ago"] = round(time_diff, 1)
                 agent_data["healthScore"] = round(100 - min(100, (time_diff/60)*10))
@@ -1058,13 +1080,14 @@ def create_app():
         # 2. Metrics
         try:
             active_blocks = []
-            for ip, data in list(BLOCKED_IPS.items())[:10]:
+            all_blocks = BlockedIP.query.all()
+            for b in all_blocks[:10]:
                 active_blocks.append({
-                    "ip": ip, 
-                    "time_remaining_seconds": max(0, int(data.get("expires_at", now) - now))
+                    "ip": b.ip, 
+                    "time_remaining_seconds": max(0, int(b.expires_at - now))
                 })
             summary["metrics"] = {
-                "total_blocked": len(BLOCKED_IPS),
+                "total_blocked": len(all_blocks),
                 "attack_rate": len([t for t in ATTACK_TRACKER.get("rate_window", []) if now - t < 60]),
                 "peak_attack_rate": ATTACK_TRACKER.get("peak_rate", 0),
                 "blocked_ips": active_blocks
