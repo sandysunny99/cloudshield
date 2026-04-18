@@ -687,11 +687,19 @@ def create_app():
 
     @app.route("/api/download-agent", methods=["GET"])
     def api_download_agent():
-        """Redirect to the latest CloudShield agent release on GitHub."""
-        from flask import redirect
-        # SaaS Best Practice: Redirect to official release asset
-        release_url = "https://github.com/sandysunny99/cloudshield/releases/latest/download/cloudshield-agent.exe"
-        return redirect(release_url)
+        """Serve locally-built CloudShield agent or return error (DevSecOps Locked)."""
+        from flask import send_from_directory
+        import os
+        static_dir = os.path.join(app.root_path, "static")
+        agent_file = "cloudshield-agent.exe"
+        
+        if os.path.exists(os.path.join(static_dir, agent_file)):
+            return send_from_directory(static_dir, agent_file, as_attachment=True)
+            
+        return jsonify({
+            "status": "error",
+            "message": "Agent binary not built. Please run build_agent.ps1 locally."
+        }), 404
 
     @app.route("/api/agent-keys", methods=["GET"])
     def api_agent_keys():
@@ -1016,13 +1024,23 @@ def create_app():
     @app.route("/api/dashboard-summary", methods=["GET"])
     def api_dashboard_summary():
         """Lightweight consolidated endpoint for dashboard telemetry (<100KB)."""
+        now = time.time()
+        summary = {
+            "agents": [],
+            "metrics": {"total_blocked": 0, "attack_rate": 0, "peak_attack_rate": 0, "blocked_ips": []},
+            "risk": {"final_score": 0, "category": "LOW"},
+            "alerts": [],
+            "soc_timeline": [],
+            "deploy": {
+                "api_key": "N/A",
+                "download_url": f"{os.environ.get('CLOUDSHIELD_API_URL', 'http://localhost:5000')}/api/download-agent"
+            }
+        }
+
+        # 1. Agents
         try:
-            # 1. Agent Status (Limit to top 20 for payload size)
-            agents = []
-            now = time.time()
             all_agents = list(AGENT_CACHE.items())
             all_agents.sort(key=lambda x: x[1]['timestamp'], reverse=True)
-            
             for a_id, entry in all_agents[:20]:
                 time_diff = now - entry["timestamp"]
                 if time_diff > 300: continue
@@ -1031,57 +1049,53 @@ def create_app():
                 agent_data["connection_status"] = status
                 agent_data["last_seen_seconds_ago"] = round(time_diff, 1)
                 agent_data["healthScore"] = round(100 - min(100, (time_diff/60)*10))
-                # Prune large fields if any
+                # Prune vulnerabilities to 5 items for dashboard list, max 50 for risk score input
                 if "vulnerabilities" in agent_data and len(agent_data["vulnerabilities"]) > 5:
                     agent_data["vulnerabilities"] = agent_data["vulnerabilities"][:5]
-                agents.append(agent_data)
+                summary["agents"].append(agent_data)
+        except Exception: pass
 
-            # 2. Security Metrics
+        # 2. Metrics
+        try:
             active_blocks = []
             for ip, data in list(BLOCKED_IPS.items())[:10]:
                 active_blocks.append({
                     "ip": ip, 
                     "time_remaining_seconds": max(0, int(data.get("expires_at", now) - now))
                 })
-            
-            # 3. Global Risk Score
+            summary["metrics"] = {
+                "total_blocked": len(BLOCKED_IPS),
+                "attack_rate": len([t for t in ATTACK_TRACKER.get("rate_window", []) if now - t < 60]),
+                "peak_attack_rate": ATTACK_TRACKER.get("peak_rate", 0),
+                "blocked_ips": active_blocks
+            }
+        except Exception: pass
+
+        # 3. Risk
+        try:
             total_vulns = []
-            for a in agents: 
+            for a in summary["agents"]:
                 total_vulns.extend(a.get("vulnerabilities", []))
-            
+            # Limit total vulns for processing to keep payload compact
+            total_vulns = total_vulns[:50]
             from risk_engine import compute_risk_scores
-            risk_data = compute_risk_scores(total_vulns)
+            summary["risk"] = compute_risk_scores(total_vulns)
+        except Exception: pass
 
-            # 4. Recent Alerts (Limit to top 10)
+        # 4. Alerts
+        try:
             from services import alert_service
-            alerts = alert_service.get_recent_alerts()[:10]
+            summary["alerts"] = alert_service.get_recent_alerts()[:10]
+        except Exception: pass
 
-            # 5. Deployment Keys (For modal)
-            agent_keys_env = os.environ.get("AGENT_KEYS", "")
-            primary_key = agent_keys_env.split(',')[0].strip() if agent_keys_env else "N/A"
+        # 5. Timeline & Keys
+        try:
+            summary["soc_timeline"] = SOC_TIMELINE[:10]
+            keys = os.environ.get("AGENT_KEYS", "").split(',')
+            summary["deploy"]["api_key"] = keys[0].strip() if keys[0] else "N/A"
+        except Exception: pass
 
-            return jsonify({
-                "status": "success",
-                "data": {
-                    "agents": agents,
-                    "metrics": {
-                        "total_blocked": len(BLOCKED_IPS),
-                        "attack_rate": len([t for t in ATTACK_TRACKER.get("rate_window", []) if now - t < 60]),
-                        "peak_attack_rate": ATTACK_TRACKER.get("peak_rate", 0),
-                        "blocked_ips": active_blocks
-                    },
-                    "risk": risk_data,
-                    "alerts": alerts,
-                    "soc_timeline": SOC_TIMELINE[:10],
-                    "deploy": {
-                        "api_key": primary_key,
-                        "download_url": f"{os.environ.get('CLOUDSHIELD_API_URL', 'http://localhost:5000')}/api/download-agent"
-                    }
-                }
-            })
-        except Exception as e:
-            print(f"Dashboard summary error: {e}")
-            return jsonify({"status": "error", "message": "Failed to generate summary"}), 500
+        return jsonify({"status": "success", "data": summary})
 
     return app
 
