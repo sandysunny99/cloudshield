@@ -28,7 +28,7 @@ cd $AgentDir
 if (Test-Path $AgentSpec) {
     pyinstaller --noconfirm $AgentSpec
 } else {
-    pyinstaller --noconfirm --onefile --windowed --name cloudshield-agent agent.py
+    pyinstaller --noconfirm --onefile --name cloudshield-agent agent.py
 }
 
 # 4. Deploy to Backend

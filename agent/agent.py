@@ -45,7 +45,7 @@ if not api_key:
 
 # Configuration
 # Default to localhost for easier local development/testing
-API_URL = os.environ.get("CLOUDSHIELD_API_URL", "http://localhost:5000/api/agent-scan")
+API_URL = os.environ.get("CLOUDSHIELD_API_URL", "https://cloudshield-tya3.onrender.com/api/agent-scan")
 parsed_url = urlparse(API_URL)
 API_PATH = parsed_url.path
 AGENT_KEY = api_key
@@ -199,6 +199,7 @@ def sign_payload(method, path, ts, nonce, body_str, secret):
 
 def ship_telemetry():
     print(f"Starting Elite EDR Agent (ID: {AGENT_ID} | Version: {AGENT_VERSION})")
+    print(f"[INFO] API URL: {API_URL}")
     while True:
         try:
             payload_dict, ts, nonce, cpu = get_system_telemetry()
@@ -225,10 +226,13 @@ def ship_telemetry():
                         requests.post(report_url, data=payload_json, headers=headers, timeout=10)
                         
                     if res.status_code == 200:
+                        print("[INFO] heartbeat sent")
                         break
                     elif res.status_code == 403:
                         print("[-] 403 Forbidden: Invalid API Key. Agent terminated.")
                         sys.exit(1)
+                    else:
+                        print(f"[-] HTTP {res.status_code} received.")
                 except Exception as e:
                     print(f"[-] Network error: {str(e)}")
                 time.sleep(2)

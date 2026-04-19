@@ -1,3 +1,8 @@
+param(
+    [Parameter(Mandatory=$false)]
+    [string]$ApiKey = "default-agent-key-123"
+)
+
 # CloudShield Windows Service Automated Installer
 # Must be executed as an elevated Administrator
 
@@ -9,7 +14,6 @@ Write-Host "=========================================" -ForegroundColor Cyan
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Warning "CRITICAL ERROR: This script requires Administrator privileges!"
     Write-Warning "Please right-click the script and select 'Run as Administrator'."
-    Read-Host -Prompt "Press Enter to exit"
     Exit
 }
 
@@ -48,17 +52,15 @@ if (Test-Path "$CurrentDir\dist\cloudshield-agent.exe") {
     Write-Host "[+] Agent relocated to $TargetDir\cloudshield-agent.exe" -ForegroundColor Green
 } else {
     Write-Warning "[-] Error: dist\cloudshield-agent.exe not found! Please compile the agent first:"
-    Write-Warning "    pyinstaller --onefile --noconsole --name cloudshield-agent agent/agent.py"
+    Write-Warning "    pyinstaller --noconfirm --onefile --windowed --name cloudshield-agent agent/agent.py"
     Exit
 }
 
 
 Write-Host "`n[STEP 3] BINDING MACHINE-LEVEL ENVIRONMENT VARIABLES..." -ForegroundColor Yellow
-Write-Host "Applying CLOUDSHIELD_API_KEY..."
-& setx CLOUDSHIELD_API_KEY "default-agent-key-123" /M | Out-Null
-Write-Host "Applying CLOUDSHIELD_API_URL..."
-& setx CLOUDSHIELD_API_URL "https://cloudshield-tya3.onrender.com/api/agent-scan" /M | Out-Null
-Write-Host "[+] System environment verified." -ForegroundColor Green
+$ApiUrl = "https://cloudshield-tya3.onrender.com/api/agent-scan"
+Write-Host "Service will use ApiKey: $ApiKey and ApiUrl: $ApiUrl"
+Write-Host "[+] Environment parameters ready for NSSM." -ForegroundColor Green
 
 
 Write-Host "`n[STEP 4 & 5] INSTALLING AND CONFIGURING CLOUDSHIELD SERVICE..." -ForegroundColor Yellow
@@ -77,6 +79,9 @@ if ($serviceStatus) {
 & $NssmExe set CloudShieldAgent AppStderr "$TargetDir\agent-error.log"
 & $NssmExe set CloudShieldAgent AppRestartDelay 5000
 & $NssmExe set CloudShieldAgent Start SERVICE_AUTO_START
+
+& $NssmExe set CloudShieldAgent AppEnvironmentExtra "CLOUDSHIELD_API_KEY=$ApiKey" "CLOUDSHIELD_API_URL=$ApiUrl"
+
 Write-Host "[+] NSSM Service Daemon successfully registered!" -ForegroundColor Green
 
 
@@ -94,4 +99,3 @@ Write-Host "1. Check logs at: C:\CloudShield\agent.log"
 Write-Host "2. See agent online: curl https://cloudshield-tya3.onrender.com/api/agent-status"
 Write-Host "3. If issues arise, monitor C:\CloudShield\agent-error.log"
 Write-Host "=======================================================" -ForegroundColor Cyan
-Read-Host -Prompt "Press Enter to exit"
