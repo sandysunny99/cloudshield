@@ -1,6 +1,6 @@
 # CloudShield
 
-CloudShield is a production-grade DevSecOps platform and SaaS Engine providing Zero-Trust Endpoint Detection & Response (EDR), Cloud Resource auditing, and intelligent web-application firewalls (WAF). 
+CloudShield is a production-grade DevSecOps platform and SaaS Engine providing Zero-Trust Endpoint Detection & Response (EDR), Cloud Resource auditing, and intelligent web-application firewalls (WAF). The architecture aligns with CIS benchmark recommendations and is designed to support HIPAA, NIST 800‑53, and ISO 27001 reporting requirements.
 
 ## 🌟 Key Features
 - **Endpoint Agent**: Standalone EDR loop utilizing Trivy container parsing and resource scraping logic payload generation.
@@ -27,7 +27,14 @@ npm install
 npm run dev
 ```
 
-### 3. Executing Telemetry Node Agent
+### 3. Agent Setup
+Before running the agent, install the required dependencies and configure the environment variables:
+```bash
+cd agent
+pip install -r requirements.txt
+```
+
+### 4. Executing Telemetry Node Agent
 Provide your explicit SaaS Edge identifier:
 ```bash
 cd agent

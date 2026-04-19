@@ -4,11 +4,6 @@ PHASE 3: Hardened with HTTPS, timeout=5, allow_redirects, full try/except wrappi
 """
 import requests
 
-# Known-public buckets for reliable demo mode
-DEMO_PUBLIC_BUCKETS = {
-    "commoncrawl", "nyc-tlc", "azureopendatastorage", "gcp-public-data-landsat"
-}
-
 def check_storage_public(provider: str, bucket: str) -> dict:
     """
     Safely checks whether a cloud storage bucket is publicly accessible.
@@ -19,16 +14,6 @@ def check_storage_public(provider: str, bucket: str) -> dict:
 
     provider = provider.lower().strip()
     bucket   = bucket.strip()
-
-    # ── PHASE 4: Demo Fallback (guaranteed demo-safe response) ──
-    if bucket in DEMO_PUBLIC_BUCKETS:
-        return {
-            "public": True,
-            "status": "Public (demo fallback)",
-            "bucket": bucket,
-            "provider": provider,
-            "demo": True
-        }
 
     # ── PHASE 3: Hardened HTTP check ──
     try:
@@ -84,35 +69,32 @@ def check_storage_public(provider: str, bucket: str) -> dict:
     except requests.exceptions.ConnectionError:
         return {
             "public": False,
-            "status": "Connection failed — bucket likely private or non-existent",
+            "status": "unknown",
+            "message": "Connection error — network unreachable",
             "bucket": bucket,
-            "provider": provider,
-            "demo": False
+            "provider": provider
         }
     except requests.exceptions.Timeout:
         return {
             "public": False,
-            "status": "Request timed out — assuming private",
+            "status": "unknown",
+            "message": "Connection error — request timed out",
             "bucket": bucket,
-            "provider": provider,
-            "demo": False
+            "provider": provider
         }
     except requests.exceptions.RequestException as e:
         return {
             "public": False,
-            "status": "Request error (handled safely)",
-            "error": str(e),
+            "status": "unknown",
+            "message": f"Connection error: {str(e)}",
             "bucket": bucket,
-            "provider": provider,
-            "demo": True
+            "provider": provider
         }
     except Exception as e:
-        # Final safety net — never expose a raw exception to caller
         return {
             "public": False,
-            "status": "Internal check error (handled safely)",
-            "error": str(e),
+            "status": "unknown",
+            "message": f"Internal check error: {str(e)}",
             "bucket": bucket,
-            "provider": provider,
-            "demo": True
+            "provider": provider
         }

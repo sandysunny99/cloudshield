@@ -365,32 +365,8 @@ async function runScan() {
 }
 
 // ── Run Demo ──
-async function runDemo() {
-    setButtonsDisabled(true);
-    showPipelineRunning();
-    clearLog();
-    addLog('Running demo — BEFORE + AFTER scans...', 'info');
-    try {
-        const res = await fetch(`${API_BASE}/api/demo`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }
-        });
-        const json = await res.json();
-        if (json.status === 'error') throw new Error(json.message || 'Demo failed');
-        if (json.data) {
-            renderResults(json.data.before);
-            renderComparison(json.data.before, json.data.after);
-            showPipelineDone();
-            showToast('Demo complete — Before/After loaded', 'success');
-            addSocEvent('INFO', 'Demo pipeline complete. Before/After comparison rendered.');
-        }
-    } catch (e) {
-        addLog('Demo failed: ' + e.message, 'error');
-        showPipelineError();
-        showToast('Demo failed: ' + e.message, 'error');
-        addSocEvent('WARNING', `Demo error: ${e.message}`);
-    } finally {
-        setButtonsDisabled(false);
-    }
+function runDemo() {
+    showToast("Demo mode disabled in production", "warning");
 }
 
 async function loadCachedResults() {
@@ -412,17 +388,6 @@ function toggleConfigPanel() {
 function clearConfigEditor() {
     document.getElementById('config-editor').value = '';
     document.getElementById('config-status').textContent = '';
-}
-function loadSampleBadConfig() {
-    const sample = JSON.stringify({
-        s3_buckets:[{name:'public-data-bucket',acl:'public-read',public_access_block:{block_public_acls:false,block_public_policy:false},encryption:{enabled:false},logging:{enabled:false}},{name:'logs-bucket',acl:'private',public_access_block:{block_public_acls:true,block_public_policy:true},encryption:{enabled:true,algorithm:'AES256'},logging:{enabled:false}}],
-        iam_roles:[{name:'admin-role',mfa_required:false,policies:[{name:'full-access',action:'*',resource:'*'},{name:'s3-all',action:'s3:*',resource:'*'}]}],
-        cloudtrail:{enabled:false,multi_region:false,log_file_validation:false},
-        container_config:{privileged:true,run_as_root:true,read_only_rootfs:false}
-    }, null, 2);
-    document.getElementById('config-editor').value = sample;
-    document.querySelector('input[name="config-type"][value="json"]').checked = true;
-    document.getElementById('config-status').textContent = '✅ Sample bad config loaded';
 }
 async function scanRawConfig() {
     const configText = document.getElementById('config-editor').value.trim();
@@ -1136,7 +1101,6 @@ window.runScan           = runScan;
 window.runDemo           = runDemo;
 window.toggleConfigPanel = toggleConfigPanel;
 window.clearConfigEditor = clearConfigEditor;
-window.loadSampleBadConfig = loadSampleBadConfig;
 window.scanRawConfig     = scanRawConfig;
 window.copyCommand       = copyCommand;
 window.checkS3Bucket     = checkS3Bucket;

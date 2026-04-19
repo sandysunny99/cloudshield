@@ -35,7 +35,7 @@ def scan_container_image(image_name: str) -> dict:
 
     try:
         if not _trivy_available():
-            return _demo_fallback_scan(image_name)
+            return {"status": "error", "message": "Trivy CLI not installed"}
 
         image_name = image_name.strip()
         started_at = datetime.utcnow().isoformat() + "Z"
@@ -54,8 +54,8 @@ def scan_container_image(image_name: str) -> dict:
             timeout=TRIVY_TIMEOUT
         )
 
-        if result.returncode not in (0, 1):  # 1 = vulnerabilities found (normal)
-            return _demo_fallback_scan(image_name)
+        if result.returncode not in (0, 1):
+            return {"status": "error", "message": f"Trivy scan failed (exit {result.returncode})"}
 
         if not result.stdout.strip():
             return {
@@ -70,9 +70,8 @@ def scan_container_image(image_name: str) -> dict:
         data = json.loads(result.stdout)
         return _parse_trivy_image_output(data, image_name, started_at)
 
-    except Exception:
-        # Phase 2 & 8: Always return demo fallback if Trivy fails
-        return _demo_fallback_scan(image_name)
+    except Exception as e:
+        return {"status": "error", "message": f"Scan execution error: {str(e)}"}
 
 
 def scan_filesystem(path: str = None) -> dict:
@@ -124,87 +123,6 @@ def scan_filesystem(path: str = None) -> dict:
         return {"status": "error", "message": str(e), "vulnerabilities": [], "summary": {}}
 
 
-def _demo_fallback_scan(image_name: str) -> dict:
-    """
-    Demo-safe fallback when Trivy is not installed.
-    Returns realistic-looking CVE data so demos never fail.
-    """
-    scanned_at = datetime.utcnow().isoformat() + "Z"
-    vulns = [
-        {
-            "id": "CVE-2023-44487", "pkg": "nghttp2", "installed_version": "1.51.0",
-            "fixed_version": "1.57.0", "severity": "HIGH",
-            "title": "HTTP/2 Rapid Reset Attack (DoS vulnerability)",
-            "description": "The HTTP/2 protocol allows a denial of service (server resource consumption) because request cancellation can reset many streams quickly.",
-            "references": ["https://nvd.nist.gov/vuln/detail/CVE-2023-44487"],
-            "cvss": {"source": "nvd", "v3_score": 7.5, "v3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"},
-            "target": image_name, "class": "os-pkgs", "type": "debian", "source": "trivy", "scan_target": image_name
-        },
-        {
-            "id": "CVE-2023-5363", "pkg": "openssl", "installed_version": "3.0.10",
-            "fixed_version": "3.0.11", "severity": "HIGH",
-            "title": "OpenSSL: Incorrect cipher key and IV length processing",
-            "description": "A bug has been identified in the processing of key and initialisation vector lengths. Applications calling EVP_EncryptInit_ex2, EVP_DecryptInit_ex2 or EVP_CipherInit_ex2 may be incorrectly supplied with 0-byte or truncated key material.",
-            "references": ["https://nvd.nist.gov/vuln/detail/CVE-2023-5363"],
-            "cvss": {"source": "nvd", "v3_score": 7.5, "v3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"},
-            "target": image_name, "class": "os-pkgs", "type": "debian", "source": "trivy", "scan_target": image_name
-        },
-        {
-            "id": "CVE-2023-3817", "pkg": "openssl", "installed_version": "3.0.10",
-            "fixed_version": "3.0.11", "severity": "MEDIUM",
-            "title": "OpenSSL: Excessive time and resources spent checking DH q parameter value",
-            "description": "Issue summary: Checking excessively long DH keys or parameters may be very slow.",
-            "references": ["https://nvd.nist.gov/vuln/detail/CVE-2023-3817"],
-            "cvss": {"source": "nvd", "v3_score": 5.3, "v3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"},
-            "target": image_name, "class": "os-pkgs", "type": "debian", "source": "trivy", "scan_target": image_name
-        },
-        {
-            "id": "CVE-2023-2975", "pkg": "openssl", "installed_version": "3.0.10",
-            "fixed_version": "3.0.11", "severity": "MEDIUM",
-            "title": "OpenSSL: AES-SIV cipher implementation contains a bug",
-            "description": "Issue summary: The AES-SIV cipher implementation contains a bug that causes it to ignore empty associated data entries which are unauthenticated as a result.",
-            "references": ["https://nvd.nist.gov/vuln/detail/CVE-2023-2975"],
-            "cvss": {"source": "nvd", "v3_score": 5.3},
-            "target": image_name, "class": "os-pkgs", "type": "debian", "source": "trivy", "scan_target": image_name
-        },
-        {
-            "id": "CVE-2023-29491", "pkg": "ncurses", "installed_version": "6.3",
-            "fixed_version": "Not fixed", "severity": "MEDIUM",
-            "title": "ncurses: Local users can trigger security-relevant memory corruption",
-            "description": "ncurses before 6.4 20230408, when used by a setuid application, allows local users to trigger security-relevant memory corruption.",
-            "references": ["https://nvd.nist.gov/vuln/detail/CVE-2023-29491"],
-            "cvss": {"source": "nvd", "v3_score": 7.8},
-            "target": image_name, "class": "os-pkgs", "type": "debian", "source": "trivy", "scan_target": image_name
-        },
-        {
-            "id": "CVE-2023-4016", "pkg": "procps", "installed_version": "2:3.3.17",
-            "fixed_version": "Not fixed", "severity": "LOW",
-            "title": "procps: ps buffer overflow",
-            "description": "Under some circumstances, this allows local users to obtain sensitive information or cause a denial of service.",
-            "references": ["https://nvd.nist.gov/vuln/detail/CVE-2023-4016"],
-            "cvss": {"source": "nvd", "v3_score": 3.3},
-            "target": image_name, "class": "os-pkgs", "type": "debian", "source": "trivy", "scan_target": image_name
-        },
-    ]
-    return {
-        "status":          "completed",
-        "scan_mode":       "demo",
-        "scan_target":     image_name,
-        "scanned_at":      scanned_at,
-        "artifact_name":   image_name,
-        "artifact_type":   "container_image",
-        "vulnerabilities": vulns,
-        "summary": {
-            "total":    6,
-            "critical": 0,
-            "high":     2,
-            "medium":   3,
-            "low":      1,
-            "unknown":  0,
-        },
-        "message":   "Demo scan results (Trivy not installed — using demo mode for showcase purposes).",
-        "_demo_mode": True
-    }
 
 
 def _parse_trivy_image_output(data: dict, target: str, scanned_at: str) -> dict:

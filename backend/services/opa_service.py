@@ -83,11 +83,11 @@ def evaluate_cloud_config(config: dict, policy_name: str = "cloudshield") -> dic
     normalized_config = _normalize_input(config)
     print("NORMALIZED:", normalized_config, flush=True)
 
-    # Prepare standard fallback
-    fallback_res = _evaluate_builtin(normalized_config, scanned_at)
-
-    # Phase 3: Bypass OPA to force test
-    return fallback_res
+    # Phase 3: Evaluate via OPA or Built-in fallback
+    if _opa_available():
+        return _evaluate_via_opa_api(normalized_config, policy_name, scanned_at)
+    else:
+        return _evaluate_builtin(normalized_config, scanned_at)
 
 
 def _evaluate_via_opa_api(config: dict, policy_name: str, scanned_at: str) -> dict:

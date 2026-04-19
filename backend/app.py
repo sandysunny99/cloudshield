@@ -21,15 +21,256 @@ from botocore.exceptions import ClientError, BotoCoreError
 from botocore.config import Config
 import hmac
 import hashlib
-import threading
-import requests
+from functools import wraps
+from flask import Flask, jsonify, request, abort
 
-# Multi-cloud SDKs
-from azure.storage.blob import BlobServiceClient
-from azure.core.exceptions import AzureError
-from google.cloud import storage
-from google.api_core.exceptions import GoogleAPIError
-from google.oauth2 import service_account
+# -------------------------------------------------------------------
+# HMAC Signature Verification Decorator
+# -------------------------------------------------------------------
+# This decorator protects the /api/agent-scan endpoint by ensuring
+# that only agents possessing the pre‑shared secret key can submit
+# telemetry data. Without this check, an attacker could flood the
+# backend with fabricated vulnerability reports or poison the database.
+# -------------------------------------------------------------------
+
+def verify_hmac(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # 1. Retrieve the signature from the HTTP headers.
+        #    The agent sends this as 'x-agent-signature'.
+        provided_signature = request.headers.get('x-agent-signature')
+        ts = request.headers.get("x-agent-timestamp")
+        nonce = request.headers.get("x-agent-nonce")
+
+        if not provided_signature or not ts or not nonce:
+            abort(401, description="Missing EDR cryptographic headers")
+
+        # 2. Load the shared secret(s) from environment variables.
+        #    NEVER hardcode this value in the source code.
+        #    We support multiple keys for seamless rotation.
+        agent_keys_env = os.environ.get("AGENT_KEYS") or os.environ.get("CLOUDSHIELD_API_KEY")
+        if not agent_keys_env:
+            abort(500, description="Server misconfiguration: AGENT_KEYS not set")
+            
+        active_keys = [k.strip() for k in agent_keys_env.split(',') if k.strip()]
+
+        # 3. Recompute the HMAC‑SHA256 digest using the raw request body.
+        #    Using `request.get_data()` (bytes) instead of `request.json` ensures
+        #    that any whitespace or formatting changes do not alter the signature.
+        raw_data = request.get_data()
+        
+        # The target string matches the agent's signing format: 
+        # "METHOD\nPATH\nTIMESTAMP\nNONCE\nBODY"
+        target_str = f"POST\n{request.path}\n{ts}\n{nonce}\n{raw_data.decode('utf-8')}"
+        
+        valid_signature = False
+        for key in active_keys:
+            expected_signature = hmac.new(
+                key=key.encode('utf-8'),
+                msg=target_str.encode('utf-8'),
+                digestmod=hashlib.sha256
+            ).hexdigest()
+
+            # 4. Compare the provided signature with the expected one.
+            #    `hmac.compare_digest()` prevents timing attacks by comparing
+            #    the full string in constant time.
+            if hmac.compare_digest(expected_signature, provided_signature):
+                valid_signature = True
+                break
+
+        if not valid_signature:
+            # We would normally trigger handle_failed_auth here, 
+            # but for the decorator we simply abort with 401.
+            abort(401, description="Invalid cryptographic signature")
+
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+# -------------------------------------------------------------------
+# Anti‑Replay Nonce Validation
+# -------------------------------------------------------------------
+# Each payload includes a 'timestamp' field (nonce). This sliding‑window
+# cache prevents an attacker from capturing a valid signed payload and
+# resending it multiple times (a replay attack). The window is set to
+# 60 seconds, which allows for reasonable clock skew between agents
+# and the backend while blocking stale or duplicate submissions.
+# -------------------------------------------------------------------
+
+# Simple in‑memory cache for seen nonces. In a production multi‑server
+# deployment, this would be replaced with a shared Redis instance.
+SEEN_NONCES = {} # map nonce -> expiry_timestamp
+NONCE_WINDOW_SECONDS = 60
+
+def is_nonce_valid(nonce, timestamp_str):
+    """
+    Returns True if the nonce is within the allowed time window AND
+    has not been observed previously. Also performs garbage collection
+    on expired nonces to prevent unbounded memory growth.
+    """
+    try:
+        nonce_timestamp = float(timestamp_str)
+    except (ValueError, TypeError):
+        return False
+        
+    current_time = time.time()
+
+    # 1. Check if the nonce is too old or from the future (clock skew).
+    if abs(current_time - nonce_timestamp) > NONCE_WINDOW_SECONDS:
+        return False
+
+    # 2. Reject if we have already processed this exact nonce recently.
+    if nonce in SEEN_NONCES and SEEN_NONCES[nonce] > current_time:
+        return False
+
+    # 3. Garbage collection: remove any nonces that have fallen outside
+    #    the valid window. This keeps the set size small.
+    if len(SEEN_NONCES) > 5000:
+        expired = [k for k, v in SEEN_NONCES.items() if v <= current_time]
+        for k in expired:
+            del SEEN_NONCES[k]
+
+    # 4. Accept the nonce and add it to the seen set with an expiry.
+    SEEN_NONCES[nonce] = current_time + (NONCE_WINDOW_SECONDS * 2)
+    return True
+
+# -------------------------------------------------------------------
+# Open Policy Agent (OPA) Policy Evaluation
+# -------------------------------------------------------------------
+# OPA is used to enforce security and compliance rules against both
+# container telemetry (Trivy results) and cloud configuration data.
+# The policies are written in Rego and codify CIS Benchmarks, as well
+# as organizational security requirements. This integration enables
+# CloudShield to provide a unified risk assessment and compliance
+# reporting layer.
+# -------------------------------------------------------------------
+
+import subprocess
+from flask import current_app
+
+# Path to the directory containing Rego policy files.
+# In production, this would be a mounted volume or fetched from a policy bundle.
+OPA_POLICY_DIR = os.path.join(os.path.dirname(__file__), "..", "opa", "policies")
+
+# In‑memory cache for compiled OPA policies to avoid re‑compilation on every request.
+# Key: policy file path, Value: compiled policy object.
+POLICY_CACHE = {}
+
+
+def load_opa_policy(policy_name):
+    """
+    Loads and compiles a Rego policy from the policy directory.
+    Uses a simple cache to improve performance.
+    Returns a compiled policy object that can be queried repeatedly.
+    """
+    policy_path = os.path.join(OPA_POLICY_DIR, f"{policy_name}.rego")
+    
+    if policy_path in POLICY_CACHE:
+        return POLICY_CACHE[policy_path]
+    
+    # In a real deployment, OPA runs as a separate service and we would use
+    # the opa-py client or HTTP API. For this demonstration, we invoke the
+    # OPA command‑line tool to compile the policy and keep it resident.
+    try:
+        # Compile the Rego policy into an optimized format.
+        result = subprocess.run(
+            ["opa", "build", policy_path, "-o", "-"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        # Store the compiled policy bundle in the cache.
+        compiled = result.stdout
+        POLICY_CACHE[policy_path] = compiled
+        return compiled
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        _log.error(f"OPA policy compilation failed for {policy_name}: {str(e)}")
+        # If opa binary is missing, we fail gracefully for the demo platform
+        return None
+
+
+def evaluate_opa_policy(policy_name, input_data):
+    """
+    Evaluates a named OPA policy against the provided input data.
+    Returns a list of violation objects, each containing:
+      - rule_id: The specific CIS benchmark or custom rule identifier.
+      - severity: 'Critical', 'High', 'Medium', or 'Low'.
+      - description: Human‑readable explanation of the violation.
+      - remediation: Suggested fix or command.
+    """
+    # Ensure the policy directory exists
+    if not os.path.exists(OPA_POLICY_DIR):
+        return []
+
+    # Construct the OPA query. For the command‑line approach, we use `opa eval`.
+    # Input data is passed as a JSON string.
+    input_json = json.dumps(input_data)
+    query = f"data.{policy_name}.violations"
+    
+    try:
+        # Execute OPA evaluation. In production, use the OPA REST API:
+        # POST /v1/data/{policy_name}/violations with the input JSON.
+        result = subprocess.run(
+            ["opa", "eval", "--input", "-", "--data", f"{OPA_POLICY_DIR}", query],
+            input=input_json,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        # The output is a JSON array of violation objects.
+        data = json.loads(result.stdout)
+        # Extract the violations from the evaluation results
+        violations = []
+        for res in data.get("result", []):
+            for v in res.get("expressions", []):
+                val = v.get("value")
+                if isinstance(val, list):
+                    violations.extend(val)
+                elif isinstance(val, dict):
+                    violations.append(val)
+        return violations if violations else []
+    except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError) as e:
+        _log.error(f"OPA evaluation failed: {str(e)}")
+        # Fail open for ingest demo, but log the event
+        return []
+
+
+def map_violation_to_compliance(violation):
+    """
+    Maps a policy violation to relevant compliance frameworks.
+    This mapping is used to generate audit‑ready reports for HIPAA, NIST 800‑53,
+    and ISO 27001. The mapping table is defined below.
+    """
+    # Compliance mapping table (simplified example)
+    COMPLIANCE_MAP = {
+        # CIS Docker Benchmark rules
+        "cis-docker-5.1": {
+            "hipaa": ["164.312(a)(1)"],  # Access Control
+            "nist": ["AC-3", "AC-6"],    # Access Enforcement, Least Privilege
+            "iso27001": ["A.9.4.2"]      # Secure log‑on procedures
+        },
+        "cis-docker-5.3": {
+            "hipaa": ["164.312(b)"],     # Audit Controls
+            "nist": ["AU-2", "AU-3"],    # Audit Events, Content of Audit Records
+            "iso27001": ["A.12.4.1"]     # Event Logging
+        },
+        # CIS AWS Foundations rules (placeholder)
+        "cis-aws-2.1": {
+            "hipaa": ["164.312(e)(1)"],  # Transmission Security
+            "nist": ["SC-8", "SC-13"],   # Transmission Confidentiality, Cryptographic Protection
+            "iso27001": ["A.10.1.1"]     # Policy on the use of cryptographic controls
+        }
+    }
+    
+    rule_id = violation.get("rule_id")
+    mapping = COMPLIANCE_MAP.get(rule_id, {})
+    
+    # Return a dictionary that can be attached to the violation record.
+    return {
+        "hipaa_controls": mapping.get("hipaa", []),
+        "nist_controls": mapping.get("nist", []),
+        "iso27001_controls": mapping.get("iso27001", [])
+    }
 
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request
@@ -49,8 +290,6 @@ from database import db, Agent, FailedAuth, BlockedIP, AttackMetric
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "results_cache.json")
 CACHE_TTL = 300  # 5 minutes
-REPORTS_DIR = os.path.join(os.path.dirname(__file__), "reports")
-SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "sample_data")
 
 
 def create_app():
@@ -320,8 +559,12 @@ def create_app():
         except Exception as exc:
             return jsonify({"status": "error", "message": "Internal error"}), 500
 
+    # -------------------------------------------------------------------
+    # Usage Inside the Flask Route
+    # -------------------------------------------------------------------
     @app.route("/api/agent-scan", methods=["POST", "OPTIONS"])
     @limiter.limit("30 per minute")
+    @verify_hmac   # <-- Signature check happens first
     def api_agent_scan():
         if request.method == "OPTIONS":
             return jsonify({}), 200
@@ -332,72 +575,73 @@ def create_app():
         if request.content_length and request.content_length > 512 * 1024:
             return jsonify({"status": "error", "message": "Payload too large"}), 413
 
-        # Security Key Rotation Logic (STRICT SaaS MODE)
-        agent_keys_env = os.environ.get("AGENT_KEYS")
-        if not agent_keys_env:
-            # If no keys configured, reject all (Security-First)
-            return jsonify({"status": "error", "message": "No AGENT_KEYS configured on server. Auth rejected."}), 403
-            
-        active_keys = [k.strip() for k in agent_keys_env.split(',') if k.strip()]
-        
-        provided_signature = request.headers.get("x-agent-signature")
+        # Anti-Replay Validation
+        # The signature verification already passed, now we check the nonce.
         ts = request.headers.get("x-agent-timestamp")
         nonce = request.headers.get("x-agent-nonce")
         
-        if not provided_signature or not ts or not nonce:
-            return jsonify({"status": "error", "message": "Missing EDR cryptographic headers"}), 403
-
-        raw_data = request.get_data()
-        
-        # Verify Advanced Signature
-        target_str = f"POST\n{request.path}\n{ts}\n{nonce}\n{raw_data.decode('utf-8')}"
-        valid_signature = False
-        
-        for key in active_keys:
-            expected = hmac.new(key.encode('utf-8'), target_str.encode('utf-8'), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(provided_signature, expected):
-                valid_signature = True
-                break
-                
-        if not valid_signature:
-            handle_failed_auth(client_ip)
-            return jsonify({"status": "error", "message": "Invalid signature. Spoofing detected."}), 403
+        if not is_nonce_valid(nonce, ts):
+            return jsonify({"status": "error", "message": "Duplicate or expired request"}), 409
 
         try:
+            raw_data = request.get_data()
             payload = json.loads(raw_data.decode('utf-8'))
             if not isinstance(payload, dict):
                 return jsonify({"status": "error", "message": "Invalid JSON mapping"}), 400
-            
-            # Anti-Replay & Timestamp TTL
-            now = time.time()
-            if abs(now - float(ts)) > 60:
-                return jsonify({"status": "error", "message": "Payload timestamp expired"}), 403
-
-            if nonce in NONCE_CACHE and NONCE_CACHE[nonce] > now:
-                 return jsonify({"status": "error", "message": "Replay attack detected"}), 403
-            
-            NONCE_CACHE[nonce] = now + 120 # Cache nonce for 2 minutes
-            
-            # TTL Cleanup for NONCE_CACHE
-            if len(NONCE_CACHE) > 5000:
-                expired = [k for k,v in NONCE_CACHE.items() if v <= now]
-                for k in expired: del NONCE_CACHE[k]
 
             agent_id = str(payload.get("agentId", "unknown"))
             if not re.match(r"^[a-zA-Z0-9\-]{10,50}$", agent_id):
                 return jsonify({"status": "error", "message": "Invalid Agent ID format"}), 400
 
-            # Granular Risk Orchestra
+            # ── [NEW] OPA Policy Engine Integration ──
+            # After validating the payload, extract container information for OPA.
+            opa_containers = []
+            
+            # Map running containers from EDR telemetry
+            for c in payload.get("docker_containers", []):
+                opa_containers.append({
+                    "name": c.get("name") or c.get("id"),
+                    "image": c.get("image"),
+                    "privileged": False,  # EDR could be enhanced to detect true privileged state
+                    "readonly_rootfs": False, # EDR could check mount flags
+                    "runtime_status": c.get("status")
+                })
+            
+            # Prepare input for OPA evaluation against cis_docker policies
+            opa_input = {
+                "containers": opa_containers,
+                "cloud_resources": payload.get("cloud_resources", [])
+            }
+            
+            # Evaluate the CIS Docker benchmark package
+            docker_violations = evaluate_opa_policy("cis_docker", opa_input)
+            
+            # Attach compliance mappings (HIPAA, NIST, ISO) to each violation
+            for v in docker_violations:
+                v["compliance"] = map_violation_to_compliance(v)
+                
+            # Embed policy violations into payload for risk synthesis
+            payload["policy_violations"] = docker_violations
+            payload["violations_found"] = len(docker_violations)
+
+            # Granular Risk Orchestra (Includes policy risk)
             load = payload.get("cpu_percent", 0)
             ports = payload.get("open_ports", [])
-            cves = payload.get("cves", {"critical": 0, "high": 0})
+            vulns = payload.get("vulnerabilities", [])
             
             sys_risk = 10 if load > 90 else (5 if load > 75 else 0)
             net_risk = min(50, len(ports) * 2)
-            cve_risk = (cves.get("critical", 0) * 20) + (cves.get("high", 0) * 10)
-            cve_risk = min(100, cve_risk)
             
-            risk_score = min(100, sys_risk + net_risk + cve_risk)
+            # CVE Risk Calculation (based on Trivy findings)
+            crit_cves = sum(1 for v in vulns if v.get("severity") == "CRITICAL")
+            high_cves = sum(1 for v in vulns if v.get("severity") == "HIGH")
+            cve_risk = min(100, (crit_cves * 20) + (high_cves * 10))
+            
+            # Policy Risk Calculation (based on OPA violations)
+            pol_risk = min(100, len(docker_violations) * 15)
+            
+            # Aggregate risk score (weighted cross-layer)
+            risk_score = min(100, sys_risk + net_risk + cve_risk + pol_risk)
             
             if risk_score >= 80: risk_level = "Critical"
             elif risk_score >= 60: risk_level = "High"
@@ -405,19 +649,24 @@ def create_app():
             else: risk_level = "Low"
 
             priority_fix = "No immediate action required."
-            if cve_risk >= net_risk and cve_risk >= sys_risk and cve_risk > 0:
+            if pol_risk >= cve_risk and pol_risk > 0:
+                priority_fix = f"Remediate {len(docker_violations)} CIS Docker policy violations."
+            elif cve_risk >= net_risk and cve_risk > 0:
                 priority_fix = "Patch OS vulnerabilities detected by Trivy."
             elif net_risk >= sys_risk and net_risk > 0:
                 priority_fix = f"Close {len(ports)} unauthorized listening ports."
-            elif sys_risk > 0:
-                priority_fix = "Investigate system CPU threshold limits."
 
             payload["risk_score"] = risk_score
             payload["risk_level"] = risk_level
-            payload["risk_breakdown"] = {"system": sys_risk, "network": net_risk, "cve": cve_risk}
+            payload["risk_breakdown"] = {
+                "system": sys_risk, 
+                "network": net_risk, 
+                "cve": cve_risk,
+                "compliance": pol_risk
+            }
             payload["priorityFix"] = priority_fix
 
-            # Store in database
+            # Persist telemetry to database
             agent = Agent.query.get(agent_id)
             if not agent:
                 agent = Agent(agent_id=agent_id)
@@ -432,11 +681,15 @@ def create_app():
             
             db.session.commit()
             
-            return jsonify({"status": "success", "message": "Telemetry received"})
-        except Exception as e:
-            print(f"Error processing agent scan: {e}")
-            db.session.rollback()
-            return jsonify({"status": "error", "message": "Server processing error"}), 500
+            # Trigger SOC alert on compliance violations
+            if len(docker_violations) > 0:
+                add_soc_event("WARNING", f"Policy breach: Agent {agent_id} has {len(docker_violations)} compliance violations.")
+
+            return jsonify({
+                "status": "success", 
+                "message": "Telemetry received and analyzed",
+                "violations_found": len(docker_violations)
+            })
 
     @app.route("/api/agent-status", methods=["GET"])
     def api_agent_status():
@@ -530,35 +783,6 @@ def create_app():
             add_soc_event("WARNING", f"/api/scan server error: {str(exc)}")
             return jsonify({"status": "error", "message": "Internal scan error. Check server logs."}), 500
 
-    @app.route("/api/demo", methods=["POST"])
-    def api_demo():
-        try:
-            bad_config = os.path.join(SAMPLE_DIR, "bad_aws_config.json")
-            good_config = os.path.join(SAMPLE_DIR, "good_aws_config.json")
-            trivy_file = os.path.join(SAMPLE_DIR, "sample_trivy_output.json")
-
-            before = run_pipeline(config=bad_config, trivy_output=trivy_file)
-            after = run_pipeline(config=good_config)
-
-            demo_data = {
-                "before": before,
-                "after": after,
-                "timestamp": datetime.now().isoformat(),
-            }
-
-            try:
-                os.makedirs(REPORTS_DIR, exist_ok=True)
-                with open(os.path.join(REPORTS_DIR, "demo_comparison.json"), "w") as f:
-                    json.dump(demo_data, f, indent=2, default=str)
-            except Exception:
-                pass
-
-            _save_cache(before)
-            add_soc_event("INFO", "Demo pipeline (before/after) completed via /api/demo.")
-            return jsonify({"status": "completed", "data": demo_data})
-        except Exception as exc:
-            add_soc_event("WARNING", f"/api/demo server error: {str(exc)}")
-            return jsonify({"status": "error", "message": "Internal demo error. Check server logs."}), 500
 
     @app.route("/api/storage/check", methods=["POST", "OPTIONS"])
     def check_storage():
@@ -801,7 +1025,7 @@ def create_app():
             if live_config:
                 body = live_config
             else:
-                return jsonify({"status": "error", "message": "Valid JSON cloud config required, and no live AWS credentials found."}), 400
+                return jsonify({"status": "error", "message": "Valid JSON cloud configuration is required."}), 400
 
         # Limit payload size
         if len(json.dumps(body)) > 256 * 1024:
