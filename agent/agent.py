@@ -198,6 +198,8 @@ def sign_payload(method, path, ts, nonce, body_str, secret):
     return hmac.new(secret.encode('utf-8'), target.encode('utf-8'), hashlib.sha256).hexdigest()
 
 def ship_telemetry():
+    if not shutil.which("trivy"):
+        print("[WARN] Trivy not found in PATH — CVE scanning disabled. Install: https://aquasecurity.github.io/trivy")
     print(f"Starting Elite EDR Agent (ID: {AGENT_ID} | Version: {AGENT_VERSION})")
     print(f"[INFO] API URL: {API_URL}")
     while True:
@@ -218,16 +220,24 @@ def ship_telemetry():
             
             for attempt in range(3):
                 try:
+                    # Regenerate nonce + re-sign on retry to avoid 409 conflicts
+                    if attempt > 0:
+                        nonce = str(uuid.uuid4())
+                        ts = str(int(time.time()))
+                        payload_dict["nonce"] = nonce
+                        payload_json = json.dumps(payload_dict, sort_keys=True, separators=(',', ':'))
+                        signature = sign_payload("POST", API_PATH, ts, nonce, payload_json, AGENT_KEY)
+                        headers["x-agent-signature"] = signature
+                        headers["x-agent-timestamp"] = ts
+                        headers["x-agent-nonce"] = nonce
+
                     res = requests.post(API_URL, data=payload_json, headers=headers, timeout=10)
-                    
-                    # Also send to the new advanced report endpoint
-                    report_url = API_URL.replace("/api/agent-scan", "/api/agent/report")
-                    if report_url != API_URL:
-                        requests.post(report_url, data=payload_json, headers=headers, timeout=10)
-                        
+
                     if res.status_code == 200:
                         print("[INFO] heartbeat sent")
                         break
+                    elif res.status_code == 409:
+                        print(f"[WARN] Nonce conflict on attempt {attempt+1}, regenerating...")
                     elif res.status_code == 403:
                         print("[-] 403 Forbidden: Invalid API Key. Agent terminated.")
                         sys.exit(1)

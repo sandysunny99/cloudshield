@@ -364,10 +364,14 @@ async function runScan() {
     }
 }
 
-// ── Run Demo ──
-function runDemo() {
-    showToast("Demo mode disabled in production", "warning");
+// runDemo removed — system operates on real data only.
+// The Run Demo button now triggers a real scan instead.
+async function runDemo() {
+    showToast('Demo mode disabled — running live scan instead.', 'info');
+    addSocEvent('INFO', 'Demo disabled. Redirecting to live scan.');
+    runScan();
 }
+
 
 async function loadCachedResults() {
     try {
@@ -1092,13 +1096,59 @@ async function fetchDashboardHub(isSilent = false) {
 
 function startSaaSPerformanceHub() {
     if (_hubInterval) clearInterval(_hubInterval);
-    fetchDashboardHub(true); // Initial silent load
+
+    // ── SSE (Server-Sent Events) for real-time push ──
+    // Falls back to 30s polling if SSE is not supported or fails
+    let sseActive = false;
+
+    if (typeof EventSource !== 'undefined') {
+        try {
+            const evtSource = new EventSource(`${API_BASE}/api/stream`);
+
+            evtSource.addEventListener('agent_update', (e) => {
+                try {
+                    const d = JSON.parse(e.data);
+                    // Merge SSE push into a minimal agent update
+                    if (lastAgentsData) {
+                        const idx = lastAgentsData.findIndex(a => a.agentId === d.agentId);
+                        if (idx >= 0) {
+                            lastAgentsData[idx].cpu_percent = d.cpu;
+                            lastAgentsData[idx].ram_percent = d.ram;
+                            lastAgentsData[idx].risk_score  = d.risk_score;
+                            lastAgentsData[idx].risk_level  = d.risk_level;
+                            lastAgentsData[idx].last_seen_seconds_ago = 0;
+                            lastAgentsData[idx].connection_status = 'online';
+                            updateAgentsUI(lastAgentsData);
+                        }
+                    }
+                    updateRiskTrendChart(d.risk_score || 0);
+                    addSocEvent('INFO', `Live update: ${d.hostname || d.agentId} | Risk ${d.risk_level}`);
+                } catch (_) {}
+            });
+
+            evtSource.onerror = () => {
+                if (sseActive) return; // Already logged
+                console.warn('[SSE] Stream error — falling back to 30s polling');
+                sseActive = false;
+            };
+
+            evtSource.onopen = () => {
+                sseActive = true;
+                addSocEvent('INFO', 'Real-time SSE stream connected.');
+            };
+        } catch (_) {
+            console.warn('[SSE] Could not connect — using polling only');
+        }
+    }
+
+    // Always run initial hub fetch + 30s polling as reliable baseline
+    fetchDashboardHub(true);
     _hubInterval = setInterval(() => fetchDashboardHub(true), 30000);
 }
 
 // ── Global Exports ──
 window.runScan           = runScan;
-window.runDemo           = runDemo;
+window.runDemo           = runDemo; // stub: runs live scan instead
 window.toggleConfigPanel = toggleConfigPanel;
 window.clearConfigEditor = clearConfigEditor;
 window.scanRawConfig     = scanRawConfig;

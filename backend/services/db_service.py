@@ -122,6 +122,22 @@ def save_risk_report(report: dict) -> str:
     return record["_id"]
 
 
+def get_last_cloud_scan() -> dict:
+    """Return the most recent cloud scan result dict, or {} if none stored."""
+    db = _get_db()
+    if db is not None:
+        try:
+            rec = db["cloud_findings"].find_one({}, {"_id": 0}, sort=[("ts", -1)])
+            return rec.get("result", {}) if rec else {}
+        except Exception as e:
+            logger.error("MongoDB get_last_cloud_scan failed: %s", e)
+    # In-memory fallback
+    findings = _in_memory_fallback.get("cloud_findings", [])
+    if findings:
+        return findings[-1].get("result", {})
+    return {}
+
+
 def get_latest_scans(limit: int = 10) -> dict:
     """Retrieve the most recent scan results from all collections."""
     db = _get_db()

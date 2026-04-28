@@ -14,6 +14,8 @@ import os
 import sys
 import time
 import tempfile
+import threading
+import queue
 import yaml
 import boto3
 import re
@@ -22,7 +24,14 @@ from botocore.config import Config
 import hmac
 import hashlib
 from functools import wraps
-from flask import Flask, jsonify, request, abort
+from flask import Flask, jsonify, request, abort, Response, stream_with_context
+
+# In-memory agent telemetry cache (keyed by agentId)
+# Populated by /api/agent-scan to allow /api/report/unified to read live data
+AGENT_CACHE: dict = {}
+
+# SSE event bus — routes push events here, /api/stream reads from it
+_SSE_QUEUE: queue.Queue = queue.Queue(maxsize=500)
 
 # -------------------------------------------------------------------
 # HMAC Signature Verification Decorator
@@ -278,7 +287,12 @@ from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-from main import run_pipeline, run_demo
+try:
+    from main import run_pipeline, run_demo
+except Exception as _import_err:
+    _log.warning(f"Could not import run_pipeline/run_demo: {_import_err}")
+    run_pipeline = None
+    run_demo = None
 from policy_engine import evaluate_with_python
 from correlation import correlate
 from risk_engine import compute_risk_scores
@@ -680,13 +694,33 @@ def create_app():
             agent.set_data(payload)
             
             db.session.commit()
-            
+
+            # Populate in-memory AGENT_CACHE for /api/report/unified
+            AGENT_CACHE[agent_id] = {"timestamp": time.time(), "data": payload}
+
+            # Push real-time SSE event to connected dashboard clients
+            try:
+                _SSE_QUEUE.put_nowait({
+                    "type": "agent_update",
+                    "data": {
+                        "agentId": agent_id,
+                        "hostname": payload.get("hostname"),
+                        "risk_score": risk_score,
+                        "risk_level": risk_level,
+                        "cpu": payload.get("cpu_percent"),
+                        "ram": payload.get("ram_percent"),
+                        "timestamp": time.time()
+                    }
+                })
+            except queue.Full:
+                pass
+
             # Trigger SOC alert on compliance violations
             if len(docker_violations) > 0:
                 add_soc_event("WARNING", f"Policy breach: Agent {agent_id} has {len(docker_violations)} compliance violations.")
 
             return jsonify({
-                "status": "success", 
+                "status": "success",
                 "message": "Telemetry received and analyzed",
                 "violations_found": len(docker_violations)
             })
@@ -775,6 +809,8 @@ def create_app():
                 else:
                     return jsonify({"status": "error", "message": "No active agents connected"}), 400
 
+            if run_pipeline is None:
+                return jsonify({"status": "error", "message": "Pipeline not available"}), 503
             result = run_pipeline(image=image, config=config, trivy_output=trivy_output)
             _save_cache(result)
             add_soc_event("INFO", "Full pipeline scan completed via /api/scan.")
@@ -782,6 +818,9 @@ def create_app():
         except Exception as exc:
             add_soc_event("WARNING", f"/api/scan server error: {str(exc)}")
             return jsonify({"status": "error", "message": "Internal scan error. Check server logs."}), 500
+
+
+    # /api/demo removed — system operates on real data only
 
 
     @app.route("/api/storage/check", methods=["POST", "OPTIONS"])
@@ -815,9 +854,10 @@ def create_app():
             return jsonify({
                 "public": False,
                 "error": str(e),
-                "status": "Error (handled safely)",
-                "demo": True
-            }), 200
+                "status": "Error",
+                "provider": "unknown",
+                "bucket": ""
+            }), 500
 
     # ── NEW: Raw Config Scan Endpoint ──
     @app.route("/api/scan-config", methods=["POST"])
@@ -1335,7 +1375,15 @@ def create_app():
             summary["alerts"] = alert_service.get_recent_alerts()[:10]
         except Exception: pass
 
-        # 5. Timeline & Keys
+        # 5. Cloud findings (last scan from DB)
+        try:
+            from services import db_service
+            last_cloud = db_service.get_last_cloud_scan()
+            summary["cloud_findings"] = last_cloud.get("violations", [])[:10] if last_cloud else []
+        except Exception:
+            summary["cloud_findings"] = []
+
+        # 6. Timeline & Keys
         try:
             summary["soc_timeline"] = SOC_TIMELINE[:10]
             keys = os.environ.get("AGENT_KEYS", "").split(',')
@@ -1343,6 +1391,30 @@ def create_app():
         except Exception: pass
 
         return jsonify({"status": "success", "data": summary})
+
+    # ── SSE Real-Time Stream ──
+    @app.route("/api/stream")
+    def api_stream():
+        """Server-Sent Events endpoint — pushes live agent + alert updates to dashboard."""
+        def generate():
+            yield "retry: 5000\n\n"  # client reconnects after 5s if disconnected
+            last_ping = time.time()
+            while True:
+                try:
+                    event = _SSE_QUEUE.get(timeout=15)
+                    import json as _json
+                    payload = _json.dumps(event["data"], default=str)
+                    yield f"event: {event['type']}\ndata: {payload}\n\n"
+                    last_ping = time.time()
+                except queue.Empty:
+                    if time.time() - last_ping > 15:
+                        yield ": keepalive\n\n"
+                        last_ping = time.time()
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+        )
 
     return app
 
