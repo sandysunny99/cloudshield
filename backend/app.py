@@ -725,7 +725,12 @@ def create_app():
                 "violations_found": len(docker_violations)
             })
 
+        except Exception as exc:
+            add_soc_event("WARNING", f"/api/agent-scan error: {str(exc)}")
+            return jsonify({"status": "error", "message": "Internal agent scan error."}), 500
+
     @app.route("/api/agent-status", methods=["GET"])
+
     def api_agent_status():
         agents = []
         now = time.time()
