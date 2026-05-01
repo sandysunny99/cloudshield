@@ -1615,7 +1615,7 @@ window.detonateSandbox = async function() {
     showToast("Detonation started in Isolated Sandbox", "info");
     
     try {
-        const res = await fetch("/api/sandbox/analyze", {
+        const res = await fetch(`${API_BASE}/api/sandbox/analyze`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ target })
@@ -1658,7 +1658,7 @@ window.runThreatHunt = async function() {
     document.getElementById("hunt-results").innerHTML = "<div style='padding:1rem;color:var(--color-high)'>Dispatching Query to OpenSearch/Velociraptor...</div>";
     
     try {
-        const res = await fetch("/api/hunt", {
+        const res = await fetch(`${API_BASE}/api/hunt`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ query: q })

@@ -308,6 +308,16 @@ from scanner import parse_trivy_output, get_scan_summary
 from services.storage_service import check_storage_public
 from database import db, Agent, FailedAuth, BlockedIP, AttackMetric
 
+
+# ── HuntEvent model: stores agent telemetry for local Threat Hunting ──
+class HuntEvent(db.Model):
+    __tablename__ = "hunt_events"
+    id         = db.Column(db.Integer, primary_key=True)
+    timestamp  = db.Column(db.String(32), nullable=False)
+    endpoint   = db.Column(db.String(128), nullable=False, default="unknown")
+    event_type = db.Column(db.String(64),  nullable=False, default="process_anomaly")
+    detail     = db.Column(db.Text,        nullable=False, default="")
+
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "results_cache.json")
 CACHE_TTL = 300  # 5 minutes
 
