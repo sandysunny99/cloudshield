@@ -32,6 +32,15 @@
                 <button class="btn btn-outline" id="btn-telemetry-panel" aria-label="Open agent telemetry panel">
                     <span class="btn-icon">💻</span> EDR (Wazuh)
                 </button>
+                                <button class="btn btn-outline" id="btn-cspm-panel" aria-label="Cloud Security">
+                    <span class="btn-icon">☁️</span> CSPM
+                </button>
+                                <button class="btn btn-outline" id="btn-bucket-panel" aria-label="Bucket Scan">
+                    <span class="btn-icon">🪣</span> Storage
+                </button>
+                <button class="btn btn-outline" id="btn-container-panel" aria-label="Container Security">
+                    <span class="btn-icon">🐳</span> Containers
+                </button>
                 <button class="btn btn-outline" id="btn-hunt-panel" aria-label="Open Threat Hunting">
                     <span class="btn-icon">🔬</span> Threat Hunting (Velociraptor)
                 </button>
@@ -586,5 +595,66 @@
     </div>
 
     <script type="module" src="/src/dashboard.js"></script>
+
+    <!-- CSPM Panel -->
+    <div id="cspm-panel" class="telemetry-panel">
+        <div class="tp-header">
+            <h2><span class="tp-icon">☁️</span> Cloud Misconfiguration Scanner</h2>
+            <button class="btn-close-tp" id="btn-close-cspm-panel">✖</button>
+        </div>
+        <div class="tp-content" style="padding: 1.5rem; overflow-y: auto;">
+            <div class="scan-controls" style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
+                <input id="aws-bucket-input" class="input-modern" type="text" placeholder="e.g. s3://my-prod-data" style="flex:1;">
+                <button id="btn-scan" class="btn btn-primary" onclick="runScan()">
+                    <span class="btn-icon">⚡</span> Run Scan
+                </button>
+            </div>
+            <div id="scan-result" class="scan-result-card" style="margin-bottom: 1rem;">
+                <p style="color:var(--text-muted)">Awaiting scan target...</p>
+            </div>
+            <div id="ai-analysis-container" class="ai-analysis-container" style="margin-top: 1rem;"></div>
+        </div>
+    </div>
+
+    <!-- Container Panel -->
+    <div id="container-panel" class="telemetry-panel">
+        <div class="tp-header">
+            <h2><span class="tp-icon">🐳</span> Container Vulnerability Scanner</h2>
+            <button class="btn-close-tp" id="btn-close-container-panel">✖</button>
+        </div>
+        <div class="tp-content" style="padding: 1.5rem; overflow-y: auto;">
+            <div class="container-scan-row" style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
+                <input id="container-image-input" class="input-modern" type="text" placeholder="e.g. nginx:latest" style="flex:1;">
+                <button id="btn-container-scan" class="btn btn-primary" onclick="runContainerScan()">
+                    <span class="btn-icon">🔍</span> Scan Image
+                </button>
+            </div>
+            <div id="container-scan-result" style="margin-bottom: 1rem;">
+                <p style="color:var(--text-muted)">Enter an image name to discover CVEs...</p>
+            </div>
+            <div id="compliance-container" style="margin-top: 1rem;"></div>
+        </div>
+    </div>
+
+
+    <!-- Bucket Scan Panel -->
+    <div id="bucket-scan-panel" class="telemetry-panel">
+        <div class="tp-header">
+            <h2><span class="tp-icon">🪣</span> S3 Bucket Security Scanner</h2>
+            <button class="btn-close-tp" id="btn-close-bucket-panel">✖</button>
+        </div>
+        <div class="tp-content" style="padding: 1.5rem; overflow-y: auto;">
+            <div class="scan-controls" style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
+                <input id="s3-bucket-input" class="input-modern" type="text" placeholder="e.g. s3://public-finance-data" style="flex:1;">
+                <button id="btn-s3-scan" class="btn btn-primary" onclick="checkS3Bucket()">
+                    <span class="btn-icon">🔍</span> Scan Bucket
+                </button>
+            </div>
+            <div id="bucket-scan-result" style="margin-bottom: 1rem;">
+                <p style="color:var(--text-muted)">Enter a bucket name to assess ACLs and encryption...</p>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>

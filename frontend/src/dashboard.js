@@ -1680,3 +1680,465 @@ window.runThreatHunt = async function() {
         document.getElementById("hunt-results").innerHTML = "<div style='color:var(--color-critical)'>Error reaching Threat Hunt API.</div>";
     }
 };
+
+
+// --- RESTORED CSPM & CONTAINER FUNCTIONS ---
+let severityChart, sourceChart, streamChart;
+window.runScan = async function() {
+    setButtonsDisabled(true);
+    showPipelineRunning();
+    clearLog();
+    addLog('Starting live agent scan...', 'info');
+    try {
+        const res = await fetch(`${API_BASE}/api/scan`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+        });
+        
+        let json;
+        try { json = await res.json(); } catch(e) {}
+        
+        if (!res.ok) {
+            throw new Error(json && json.message ? json.message : `HTTP ${res.status}`);
+        }
+        if (json && json.status === 'error') {
+            throw new Error(json.message || 'Scan failed');
+        }
+        if (json && json.data) {
+            renderResults(json.data);
+            showPipelineDone();
+            showToast('Scan completed successfully with Live Agent data', 'success');
+            addSocEvent('INFO', 'Full pipeline scan completed using live data.');
+        } else {
+            showToast('Scan returned no data — backend may be warming up', 'warning');
+        }
+    } catch (e) {
+        addLog('Scan failed: ' + e.message, 'error');
+        showPipelineError();
+        showToast('Scan failed: ' + e.message, 'error');
+        addSocEvent('WARNING', `Pipeline scan error: ${e.message}`);
+    } finally {
+        setButtonsDisabled(false);
+    }
+};
+
+window.runDemo = async function() {
+    setButtonsDisabled(true);
+    showPipelineRunning();
+    clearLog();
+    addLog('Running demo — BEFORE + AFTER scans...', 'info');
+    try {
+        const res = await fetch(`${API_BASE}/api/demo`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (json.status === 'error') throw new Error(json.message || 'Demo failed');
+        if (json.data) {
+            renderResults(json.data.before);
+            renderComparison(json.data.before, json.data.after);
+            showPipelineDone();
+            showToast('Demo complete — Before/After loaded', 'success');
+            addSocEvent('INFO', 'Demo pipeline complete. Before/After comparison rendered.');
+        }
+    } catch (e) {
+        addLog('Demo failed: ' + e.message, 'error');
+        showPipelineError();
+        showToast('Demo failed: ' + e.message, 'error');
+        addSocEvent('WARNING', `Demo error: ${e.message}`);
+    } finally {
+        setButtonsDisabled(false);
+    }
+};
+
+window.checkS3Bucket = async function() {
+    const input  = document.getElementById('s3-bucket-name');
+    const name   = input.value.trim().toLowerCase();
+    const provider = document.querySelector('input[name="cloud-provider"]:checked')?.value || 'aws';
+    const resultDiv = document.getElementById('s3-check-result');
+    const btn    = document.getElementById('btn-check-s3');
+
+    if (!name) {
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<span style="color:var(--color-critical)">❌ Enter a resource name</span>';
+        showToast('Enter a resource name to check', 'warning');
+        return;
+    }
+    if (!/^[a-z0-9.\-_]{3,63}$/.test(name)) {
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<span style="color:var(--color-critical)">❌ Invalid name — only a-z, 0-9, hyphens, dots (3–63 chars)</span>';
+        showToast('Invalid resource name format', 'error');
+        input.style.borderColor = 'var(--color-critical)';
+        setTimeout(() => { input.style.borderColor = ''; }, 3000);
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Analyzing...';
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = `<span style="color:var(--color-info)">⏳ Checking ${provider.toUpperCase()}…</span>`;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/check-storage`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ provider, resource: name })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (json.status === 'error') {
+            resultDiv.innerHTML = `<span style="color:var(--color-critical)">❌ ${escapeHtml(json.message)}</span>`;
+            showToast(json.message, 'error');
+        } else {
+            const isPublic = json.isPublic;
+            const statusColor = isPublic ? 'var(--color-critical)' : 'var(--color-low)';
+            let extra = '';
+            if (isPublic && json.remediation && json.remediation !== 'No action required.') {
+                extra = `<div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border-glass);">
+                    <div style="color:var(--text-secondary);font-size:0.83rem;margin-bottom:0.25rem;">Exposure</div>
+                    <div style="margin-bottom:0.5rem;"><strong>${escapeHtml(json.exposureType)}</strong></div>
+                    <div style="color:var(--text-secondary);font-size:0.83rem;margin-bottom:0.25rem;">Details</div>
+                    <div style="margin-bottom:0.5rem;">${escapeHtml(json.details)}</div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,0.3);padding:0.45rem;border-radius:4px;font-family:monospace;font-size:0.82rem;">
+                        <code>${escapeHtml(json.remediation)}</code>
+                        <button class="btn btn-xs" onclick="copyCommand(this)">Copy</button>
+                    </div>
+                </div>`;
+            }
+            resultDiv.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div><span class="badge badge-medium" style="margin-right:0.4rem;">${json.provider.toUpperCase()}</span><strong>Resource:</strong> <code>${escapeHtml(json.resource)}</code></div>
+                    <span class="badge ${json.risk==='Critical'?'badge-critical':json.risk==='Medium'?'badge-medium':'badge-low'}">Risk: ${json.risk} (${json.confidence}%)</span>
+                </div>
+                <div style="margin-top:0.4rem;font-size:1rem;color:${statusColor};font-weight:bold;">${isPublic?'🚨 PUBLICLY ACCESSIBLE':'✅ SECURE (Private)'}</div>
+                ${extra}`;
+            saveToHistory(json);
+            showToast(isPublic ? `⚠️ ${name} is PUBLICLY exposed` : `✅ ${name} is secure`, isPublic ? 'error' : 'success');
+            addSocEvent(isPublic ? 'CRITICAL' : 'INFO', `Storage: ${name} (${provider.toUpperCase()}) — ${isPublic ? 'EXPOSED' : 'Secure'}`);
+        }
+    } catch (e) {
+        resultDiv.innerHTML = `<span style="color:var(--color-critical)">❌ Connection failed: ${e.message}</span>`;
+        showToast('Storage check failed: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="btn-icon">☁️</span> Check Storage';
+    }
+};
+
+window.renderAlerts = function(alerts, summary) {
+    const section = document.getElementById('alerts-section');
+    section?.classList.remove('hidden');
+    const summaryEl = document.getElementById('alert-summary');
+    if (summaryEl) summaryEl.innerHTML = ['critical','high','medium','low','total'].map(k =>
+        `<div class="alert-stat ${k}"><span class="alert-count">${summary?.[k]||0}</span> ${k.charAt(0).toUpperCase()+k.slice(1)}</div>`
+    ).join('');
+    const container = document.getElementById('alerts-container');
+    if (!container) return;
+    if (!alerts?.length) {
+        container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:2rem;">✅ No alerts detected.</div>';
+        return;
+    }
+    container.innerHTML = '';
+    alerts.forEach(alert => {
+        const card = document.createElement('div');
+        card.className = `alert-card alert-${(alert.severity||'low').toLowerCase()}`;
+        card.innerHTML = `<div class="alert-header"><span class="alert-level">${alert.alert_level||'ℹ️ INFO'}</span><span class="badge badge-${(alert.severity||'low').toLowerCase()}">${alert.severity}</span></div>
+            <div class="alert-title">${escapeHtml(alert.title||'Unknown')}</div>
+            <div class="alert-message">${escapeHtml(alert.message||'')}</div>
+            <div class="alert-meta"><span>ID: <code>${alert.id||'N/A'}</code></span><span>Type: ${alert.type||'N/A'}</span></div>`;
+        container.appendChild(card);
+    });
+};
+
+window.renderRemediations = function(remediations) {
+    const section = document.getElementById('remediation-section');
+    section?.classList.remove('hidden');
+    const container = document.getElementById('remediation-container');
+    if (!container) return;
+    if (!remediations?.length) {
+        container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:2rem;">✅ No remediation actions required.</div>';
+        return;
+    }
+    container.innerHTML = '';
+    remediations.forEach(rem => {
+        const card = document.createElement('div');
+        card.className = `remediation-card confidence-${rem.confidence||'low'}`;
+        card.innerHTML = `<div class="rem-header"><span class="rem-title">🔧 ${escapeHtml(rem.title||'Unknown Fix')}</span><span class="badge badge-confidence-${rem.confidence||'low'}">${(rem.confidence||'low').toUpperCase()} confidence</span></div>
+            <div class="rem-description">${escapeHtml(rem.description||'')}</div>
+            <div class="rem-command"><div class="rem-command-header"><span>Fix Command:</span><button class="btn btn-xs" onclick="copyCommand(this)">📋 Copy</button></div><pre><code>${escapeHtml(rem.command||'# No command available')}</code></pre></div>
+            <div class="rem-meta"><span>Finding: <code>${rem.finding_id||'N/A'}</code></span><span>Strategy: ${rem.strategy||'N/A'}</span></div>`;
+        container.appendChild(card);
+    });
+};
+
+window.renderResults = function(data) {
+    if (!data) return;
+    const findings = data.findings || [];
+    const risk = data.risk || {};
+    animateCounter('total-vulns',     findings.filter(f => f.source==='trivy').length);
+    animateCounter('total-misconfig', findings.filter(f => f.source==='opa').length);
+    animateCounter('total-correlated',findings.filter(f => f.source==='correlation').length);
+    const riskScore = risk.final_score || 0;
+    document.getElementById('risk-score').textContent = riskScore;
+    const cat = risk.category || 'LOW';
+    const catBadge = document.getElementById('risk-category');
+    if (catBadge) { catBadge.textContent = cat; catBadge.className = 'card-badge badge-'+cat.toLowerCase(); }
+
+    const logs = data.execution_log || [];
+    clearLog();
+    (logs.length ? logs : ['No execution log returned.']).forEach(l => addLog(l, l.includes('✓')?'success':'info'));
+
+    renderSeverityChart(findings);
+    renderSourceChart(findings);
+    renderStreamChart(risk);
+    renderTopIssues(findings, data.remediations||[]);
+    renderFindingsTable(findings, data.remediations||[]);
+
+    // Update risk trend mini-chart
+    updateRiskTrendChart(riskScore);
+
+    // Save to history
+    saveScanToHistory(data);
+};
+
+window.renderSeverityChart = function(findings) {
+    const parent = document.getElementById('severity-bar-chart')?.parentElement;
+    if (!findings || findings.length === 0) {
+        if (parent && !parent.innerText.includes('No data available')) {
+            parent.innerHTML = '<h3>Severity Distribution</h3><div style="color:var(--text-secondary);text-align:center;padding:2rem;">No data available</div>';
+        }
+        return;
+    }
+    const counts = { CRITICAL:0, HIGH:0, MEDIUM:0, LOW:0 };
+    findings.forEach(f => { if (f.severity in counts) counts[f.severity]++; });
+    const ctx = document.getElementById('severity-bar-chart')?.getContext('2d');
+    if (!ctx) return;
+    if (severityBarChart) severityBarChart.destroy();
+    severityBarChart = new Chart(ctx, {
+        type:'bar', data:{ labels:Object.keys(counts), datasets:[{ label:'Findings', data:Object.values(counts), backgroundColor:Object.keys(counts).map(k=>SEVERITY_COLORS[k]), borderRadius:6, borderSkipped:false }] },
+        options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{beginAtZero:true,ticks:{color:'#94a3b8',stepSize:1},grid:{color:'rgba(255,255,255,0.05)'}}, x:{ticks:{color:'#94a3b8'},grid:{display:false}} } }
+    });
+};
+
+window.renderSourceChart = function(findings) {
+    const parent = document.getElementById('source-doughnut-chart')?.parentElement;
+    if (!findings || findings.length === 0) {
+        if (parent && !parent.innerText.includes('No data available')) {
+            parent.innerHTML = '<h3>Finding Sources</h3><div style="color:var(--text-secondary);text-align:center;padding:2rem;">No data available</div>';
+        }
+        return;
+    }
+    const counts = { trivy:0, opa:0, correlation:0 };
+    findings.forEach(f => { if (f.source in counts) counts[f.source]++; });
+    const ctx = document.getElementById('source-doughnut-chart')?.getContext('2d');
+    if (!ctx) return;
+    if (sourceDoughnutChart) sourceDoughnutChart.destroy();
+    sourceDoughnutChart = new Chart(ctx, {
+        type:'doughnut', data:{ labels:['CVE (Trivy)','Policy (OPA)','Correlated'], datasets:[{ data:Object.values(counts), backgroundColor:Object.values(SOURCE_COLORS), borderWidth:0, hoverOffset:8 }] },
+        options:{ responsive:true, cutout:'65%', plugins:{ legend:{ position:'bottom', labels:{color:'#94a3b8',padding:12,usePointStyle:true,pointStyleWidth:10} } } }
+    });
+};
+
+window.renderStreamChart = function(risk) {
+    const ctx = document.getElementById('stream-bar-chart').getContext('2d');
+    if (streamBarChart) streamBarChart.destroy();
+    streamBarChart = new Chart(ctx, {
+        type:'bar', data:{ labels:['CVE Stream','Policy Stream','Corr. Stream'], datasets:[{ label:'Score', data:[risk.cve_score||0,risk.policy_score||0,risk.correlated_score||0], backgroundColor:[SOURCE_COLORS.trivy,SOURCE_COLORS.opa,SOURCE_COLORS.correlation], borderRadius:6, borderSkipped:false }] },
+        options:{ indexAxis:'y', responsive:true, plugins:{legend:{display:false}}, scales:{ x:{beginAtZero:true,max:4.5,ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,0.05)'}}, y:{ticks:{color:'#94a3b8'},grid:{display:false}} } }
+    });
+};
+
+window.renderComparison = function(before, after) {
+    document.getElementById('comparison-section')?.classList.remove('hidden');
+    const bf=before.findings||[], af=after.findings||[], br=before.risk||{}, ar=after.risk||{};
+    const set = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
+    set('comp-before-issues', bf.length); set('comp-after-issues', af.length);
+    set('comp-before-crit', bf.filter(f=>f.severity==='CRITICAL').length);
+    set('comp-after-crit',  af.filter(f=>f.severity==='CRITICAL').length);
+    set('comp-before-score', br.final_score||0); set('comp-after-score', ar.final_score||0);
+    set('comp-before-cat', br.category||'N/A');  set('comp-after-cat', ar.category||'N/A');
+    const reduction = br.final_score>0 ? Math.round(((br.final_score-(ar.final_score||0))/br.final_score)*100) : 0;
+    set('reduction-badge', `↓ ${reduction}% Risk Reduction`);
+    const ctx = document.getElementById('trend-chart').getContext('2d');
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(ctx, {
+        type:'bar', data:{ labels:['CVE','Policy','Corr.','Final'],
+            datasets:[{ label:'BEFORE', data:[br.cve_score||0,br.policy_score||0,br.correlated_score||0,br.final_score||0], backgroundColor:'rgba(239,68,68,0.7)', borderRadius:4 },
+                       { label:'AFTER',  data:[ar.cve_score||0,ar.policy_score||0,ar.correlated_score||0,ar.final_score||0], backgroundColor:'rgba(34,197,94,0.7)',  borderRadius:4 }] },
+        options:{ responsive:true, plugins:{legend:{labels:{color:'#94a3b8'}}}, scales:{ y:{beginAtZero:true,max:4.5,ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,0.05)'}}, x:{ticks:{color:'#94a3b8'},grid:{display:false}} } }
+    });
+};
+
+window.renderTopIssues = function(findings, remediations) {
+    const remMap = {};
+    remediations.forEach(r => { remMap[r.finding_id] = r; });
+    const top5 = [...findings].sort((a,b) => ({CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1}[b.severity]||0)-({CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1}[a.severity]||0)).slice(0,5);
+    const tbody = document.getElementById('top-issues-body');
+    if (!tbody) return;
+    if (!top5.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--color-low);padding:1.5rem;">✅ No critical issues detected.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = '';
+    top5.forEach((f,i) => {
+        const rem = remMap[f.id]||{};
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${i+1}</td><td><code>${f.id||'N/A'}</code></td><td>${f.source||'N/A'}</td>
+            <td><span class="badge badge-${(f.severity||'low').toLowerCase()}">${f.severity||'N/A'}</span></td>
+            <td>${{CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1}[f.severity]||0}</td>
+            <td title="${escapeHtml(rem.command||'')}">${escapeHtml((rem.title||'N/A').substring(0,50))}</td>`;
+        tbody.appendChild(tr);
+    });
+};
+
+window.renderFindingsTable = function(findings, remediations) {
+    const remMap = {};
+    remediations.forEach(r => { remMap[r.finding_id] = r; });
+    const tbody = document.getElementById('findings-body');
+    if (!tbody) return;
+    if (!findings?.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--color-low);padding:1.5rem;">✅ No findings. System may be clean.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = '';
+    findings.forEach(f => {
+        const rem = remMap[f.id]||{};
+        const comp = f.compliance||{};
+        const fw = [comp.nist?.length&&'NIST', comp.iso27001?.length&&'ISO', comp.hipaa?.length&&'HIPAA'].filter(Boolean);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td><code>${(f.id||'N/A').substring(0,20)}</code></td><td>${f.type||'N/A'}</td>
+            <td><span class="badge badge-${(f.severity||'low').toLowerCase()}">${f.severity||'N/A'}</span></td>
+            <td>${escapeHtml((f.title||f.message||'N/A').substring(0,60))}</td>
+            <td>${escapeHtml((rem.title||'N/A').substring(0,40))}</td>
+            <td>${fw.join(', ')||'—'}</td>`;
+        tbody.appendChild(tr);
+    });
+};
+
+window.renderContainerScanResult = function(data, container) {
+    const s = data.summary || {};
+    const vulns = data.vulnerabilities || [];
+
+    const sevBadge = (sev, count) => {
+        if (!count) return '';
+        const cls = { CRITICAL: 'badge-critical', HIGH: 'badge-high', MEDIUM: 'badge-medium', LOW: 'badge-low' }[sev] || 'badge-low';
+        return `<span class="badge ${cls}">${count} ${sev}</span>`;
+    };
+
+    const topVulns = vulns.slice(0, 20).map(v => `
+        <tr>
+            <td><code style="color:var(--accent-blue);font-size:0.75rem;">${v.id}</code></td>
+            <td>${v.pkg}</td>
+            <td><span class="badge badge-${v.severity.toLowerCase()}">${v.severity}</span></td>
+            <td style="max-width:250px;font-size:0.8rem;">${(v.title||'').slice(0,80)}</td>
+            <td style="font-size:0.78rem;color:${v.fixed_version === 'Not fixed' ? 'var(--color-critical)' : 'var(--color-low)'};">${v.fixed_version}</td>
+        </tr>`).join('');
+
+    container.innerHTML = `
+        <div class="container-scan-summary">
+            <div class="cs-meta">
+                <strong>${data.artifact_name || data.scan_target}</strong>
+                <span style="color:var(--text-muted);font-size:0.78rem;">Scanned at ${data.scanned_at || ''}</span>
+            </div>
+            <div class="cs-badges">
+                ${sevBadge('CRITICAL', s.critical)}
+                ${sevBadge('HIGH', s.high)}
+                ${sevBadge('MEDIUM', s.medium)}
+                ${sevBadge('LOW', s.low)}
+                ${s.total === 0 ? '<span class="badge badge-low">✅ Clean</span>' : ''}
+            </div>
+        </div>
+        ${vulns.length > 0 ? `
+        <div class="table-container" style="margin-top:1rem;">
+            <table>
+                <thead><tr><th>CVE ID</th><th>Package</th><th>Severity</th><th>Title</th><th>Fix Version</th></tr></thead>
+                <tbody>${topVulns}</tbody>
+            </table>
+            ${vulns.length > 20 ? `<p style="padding:0.5rem 1rem;font-size:0.78rem;color:var(--text-muted);">Showing 20 of ${vulns.length} vulnerabilities. Export report for full list.</p>` : ''}
+        </div>` : '<p style="padding:1rem;color:var(--color-low);">✅ No vulnerabilities found in this image.</p>'}`;
+};
+
+window.renderAiAnalysis = function(analysis) {
+    const container = document.getElementById('ai-analysis-container');
+    if (!container || !analysis) return;
+
+    const riskColor = {
+        CRITICAL: 'var(--color-critical)',
+        HIGH:     'var(--color-high)',
+        MEDIUM:   'var(--color-medium)',
+        LOW:      'var(--color-low)'
+    }[analysis.overall_risk] || 'var(--text-secondary)';
+
+    const actions = (analysis.priority_actions || []).map((a, i) => `
+        <div class="ai-action">
+            <div class="ai-action-rank">${a.rank || i+1}</div>
+            <div class="ai-action-body">
+                <div class="ai-action-title">${a.action}</div>
+                ${a.command ? `<code class="ai-action-cmd">${a.command}</code>` : ''}
+                <span class="ai-urgency ai-urgency-${a.urgency || 'low'}">${a.urgency || 'low'}</span>
+            </div>
+        </div>`).join('');
+
+    const vectors = (analysis.attack_vectors || []).map(v =>
+        `<li class="ai-vector-item">⚠️ ${v}</li>`).join('');
+
+    const source = analysis._source === 'openai'
+        ? `<span class="engine-badge engine-ai">🤖 OpenAI ${analysis._model || ''}</span>`
+        : `<span class="engine-badge engine-det">⚙️ Deterministic Engine</span>`;
+
+    container.innerHTML = `
+        <div class="ai-card">
+            <div class="ai-header">
+                <div>
+                    <div class="ai-risk-level" style="color:${riskColor};">${analysis.overall_risk || 'N/A'}</div>
+                    <div class="ai-risk-label">Overall Risk Level</div>
+                </div>
+                ${source}
+            </div>
+            <div class="ai-summary">${analysis.executive_summary || ''}</div>
+            ${vectors ? `<div class="ai-section"><div class="ai-section-title">⚡ Attack Vectors</div><ul class="ai-vectors">${vectors}</ul></div>` : ''}
+            ${actions ? `<div class="ai-section"><div class="ai-section-title">🔧 Priority Actions</div><div class="ai-actions">${actions}</div></div>` : ''}
+            ${analysis.compliance_risk ? `<div class="ai-section"><div class="ai-section-title">📋 Compliance Risk</div><p class="ai-summary">${analysis.compliance_risk}</p></div>` : ''}
+            ${analysis.estimated_blast_radius ? `<div class="ai-section"><div class="ai-section-title">💥 Blast Radius</div><p class="ai-summary">${analysis.estimated_blast_radius}</p></div>` : ''}
+        </div>`;
+};
+
+window.renderCompliancePanel = function(compliance) {
+    const container = document.getElementById('compliance-container');
+    if (!container || !compliance) return;
+
+    const fw = compliance.framework_summary || {};
+    const statusIcon = s => s === 'COMPLIANT' ? '✅' : s === 'FAILING' ? '❌' : '⚠️';
+    const statusColor = s => s === 'COMPLIANT' ? 'var(--color-low)' : s === 'FAILING' ? 'var(--color-critical)' : 'var(--color-high)';
+
+    const frameworkCards = Object.values(fw).map(f => `
+        <div class="compliance-fw-card">
+            <div class="fw-header">
+                <span class="fw-name">${f.name}</span>
+                <span style="color:${statusColor(f.status)};font-weight:700;">${statusIcon(f.status)} ${f.status}</span>
+            </div>
+            <div class="fw-violations">${f.violations} control${f.violations !== 1 ? 's' : ''} violated</div>
+        </div>`).join('');
+
+    const sev = compliance.severity_breakdown || {};
+    const overallColor = statusColor(compliance.overall_status);
+
+    container.innerHTML = `
+        <div class="compliance-card">
+            <div class="compliance-header">
+                <div>
+                    <div class="compliance-status" style="color:${overallColor};">${statusIcon(compliance.overall_status)} ${compliance.overall_status}</div>
+                    <div class="compliance-subtitle">${compliance.findings_mapped} findings mapped across ${compliance.frameworks_impacted} frameworks</div>
+                </div>
+                <div class="compliance-sev-row">
+                    ${sev.CRITICAL ? `<span class="badge badge-critical">${sev.CRITICAL} Critical</span>` : ''}
+                    ${sev.HIGH     ? `<span class="badge badge-high">${sev.HIGH} High</span>`         : ''}
+                </div>
+            </div>
+            <div class="compliance-frameworks">${frameworkCards}</div>
+            ${compliance.nist_controls?.length ? `
+            <div class="compliance-controls-section">
+                <div class="compliance-controls-title">NIST 800-53 Controls Triggered</div>
+                <div class="compliance-controls-list">${compliance.nist_controls.slice(0,8).map(c => `<span class="ctrl-badge">${c}</span>`).join('')}</div>
+            </div>` : ''}
+        </div>`;
+};
+
