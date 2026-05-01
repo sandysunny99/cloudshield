@@ -1648,11 +1648,12 @@ document.getElementById("btn-siem-panel").addEventListener("click", () => {
 document.getElementById("btn-hunt-panel").addEventListener("click", () => {
     document.querySelectorAll(".section").forEach(s => s.classList.add("hidden"));
     document.getElementById("hunt-panel").classList.remove("hidden");
+    // Pre-load all events immediately
+    window.runThreatHunt();
 });
 
 window.runThreatHunt = async function() {
     const q = document.getElementById("vql-query").value;
-    if (!q) { showToast("Enter a query", "warning"); return; }
     
     document.getElementById("hunt-results").style.display = "block";
     document.getElementById("hunt-results").innerHTML = "<div style='padding:1rem;color:var(--color-high)'>Dispatching Query to OpenSearch/Velociraptor...</div>";

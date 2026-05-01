@@ -632,12 +632,13 @@ def create_app():
         
         body = request.get_json(silent=True) or {}
         raw_query = body.get("query", "").strip()
-        if not raw_query:
-            return jsonify({"status": "error", "message": "query field is required"}), 400
 
         # Parse VQL-like queries to extract meaningful keywords
         search_terms = []
-        if "SELECT " in raw_query.upper() and "WHERE" in raw_query.upper():
+        if not raw_query or raw_query == "*":
+            # Empty query or wildcard -> return everything
+            pass
+        elif "SELECT " in raw_query.upper() and "WHERE" in raw_query.upper():
             # Extract anything inside quotes or after =~
             matches = re.findall(r'['"]([^'"]+)['"]', raw_query)
             for m in matches:
@@ -651,8 +652,8 @@ def create_app():
         
         for ev in events:
             ev_text = f"{ev.detail} {ev.endpoint} {ev.event_type}".lower()
-            # If any extracted term matches the event text, include it
-            if any(term in ev_text for term in search_terms if term):
+            # If search_terms is empty, return all events. Otherwise, check matches.
+            if not search_terms or any(term in ev_text for term in search_terms if term):
                 results.append({
                     "timestamp": ev.timestamp,
                     "endpoint": ev.endpoint,
