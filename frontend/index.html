@@ -32,15 +32,16 @@
                 <button class="btn btn-outline" id="btn-telemetry-panel" aria-label="Open agent telemetry panel">
                     <span class="btn-icon">💻</span> EDR (Wazuh)
                 </button>
-                                <button class="btn btn-outline" id="btn-cspm-panel" aria-label="Cloud Security">
-                    <span class="btn-icon">☁️</span> CSPM
-                </button>
-                                <button class="btn btn-outline" id="btn-bucket-panel" aria-label="Bucket Scan">
-                    <span class="btn-icon">🪣</span> Storage
-                </button>
-                <button class="btn btn-outline" id="btn-container-panel" aria-label="Container Security">
-                    <span class="btn-icon">🐳</span> Containers
-                </button>
+                                <div class="nav-dropdown" id="cloud-security-dropdown">
+                    <button class="btn btn-outline" id="btn-cloud-security" aria-label="Cloud Security">
+                        <span class="btn-icon">☁️</span> Cloud Security <span style="font-size:0.6rem;margin-left:2px">▼</span>
+                    </button>
+                    <div class="dropdown-menu" id="cloud-dropdown-menu">
+                        <button class="dropdown-item" id="btn-cspm-panel"><span>⚙️</span> Misconfiguration Scanner</button>
+                        <button class="dropdown-item" id="btn-container-panel"><span>🐳</span> Container Vulnerability</button>
+                        <button class="dropdown-item" id="btn-bucket-panel"><span>🪣</span> Storage / S3 Audit</button>
+                    </div>
+                </div>
                 <button class="btn btn-outline" id="btn-hunt-panel" aria-label="Open Threat Hunting">
                     <span class="btn-icon">🔬</span> Threat Hunting (Velociraptor)
                 </button>
@@ -596,62 +597,47 @@
 
     <script type="module" src="/src/dashboard.js"></script>
 
-    <!-- CSPM Panel -->
-    <div id="cspm-panel" class="telemetry-panel">
-        <div class="tp-header">
-            <h2><span class="tp-icon">☁️</span> Cloud Misconfiguration Scanner</h2>
-            <button class="btn-close-tp" id="btn-close-cspm-panel">✖</button>
+    <!-- ═══ Unified Cloud Security Panel ═══ -->
+    <div id="cloud-security-panel" class="telemetry-panel">
+        <div class="tp-header" style="border-bottom:1px solid var(--border-glass);">
+            <h2><span class="tp-icon">☁️</span> Cloud Security</h2>
+            <button class="btn-close-tp" id="btn-close-cloud-panel">✖</button>
         </div>
-        <div class="tp-content" style="padding: 1.5rem; overflow-y: auto;">
-            <div class="scan-controls" style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
-                <input id="aws-bucket-input" class="input-modern" type="text" placeholder="e.g. s3://my-prod-data" style="flex:1;">
-                <button id="btn-scan" class="btn btn-primary" onclick="runScan()">
-                    <span class="btn-icon">⚡</span> Run Scan
-                </button>
-            </div>
-            <div id="scan-result" class="scan-result-card" style="margin-bottom: 1rem;">
-                <p style="color:var(--text-muted)">Awaiting scan target...</p>
-            </div>
-            <div id="ai-analysis-container" class="ai-analysis-container" style="margin-top: 1rem;"></div>
+        <!-- Sub-tab navigation -->
+        <div class="cloud-tabs">
+            <button class="cloud-tab active" data-tab="cspm-tab">⚙️ Misconfig Scanner</button>
+            <button class="cloud-tab" data-tab="container-tab">🐳 Container CVE</button>
+            <button class="cloud-tab" data-tab="bucket-tab">🪣 Storage Audit</button>
         </div>
-    </div>
-
-    <!-- Container Panel -->
-    <div id="container-panel" class="telemetry-panel">
-        <div class="tp-header">
-            <h2><span class="tp-icon">🐳</span> Container Vulnerability Scanner</h2>
-            <button class="btn-close-tp" id="btn-close-container-panel">✖</button>
-        </div>
-        <div class="tp-content" style="padding: 1.5rem; overflow-y: auto;">
-            <div class="container-scan-row" style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
-                <input id="container-image-input" class="input-modern" type="text" placeholder="e.g. nginx:latest" style="flex:1;">
-                <button id="btn-container-scan" class="btn btn-primary" onclick="runContainerScan()">
-                    <span class="btn-icon">🔍</span> Scan Image
-                </button>
+        <div class="tp-content" style="padding:1.5rem;overflow-y:auto;">
+            <!-- CSPM Tab -->
+            <div id="cspm-tab" class="cloud-tab-content active">
+                <p style="color:var(--text-secondary);margin-bottom:1rem;font-size:0.85rem;">Analyze AWS/GCP/Azure configurations for policy violations mapped to CIS, NIST 800-53, and ISO 27001.</p>
+                <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+                    <input id="aws-bucket-input" class="input-modern" type="text" placeholder="Paste cloud config JSON or leave blank for auto-detect" style="flex:1;">
+                    <button class="btn btn-primary" onclick="runScan()"><span class="btn-icon">⚡</span> Scan</button>
+                </div>
+                <div id="scan-result" class="scan-result-card"><p style="color:var(--text-muted)">Awaiting scan target...</p></div>
+                <div id="ai-analysis-container" class="ai-analysis-container" style="margin-top:1rem;"></div>
             </div>
-            <div id="container-scan-result" style="margin-bottom: 1rem;">
-                <p style="color:var(--text-muted)">Enter an image name to discover CVEs...</p>
+            <!-- Container Tab -->
+            <div id="container-tab" class="cloud-tab-content">
+                <p style="color:var(--text-secondary);margin-bottom:1rem;font-size:0.85rem;">Scan Docker/OCI container images for known CVEs using the Trivy vulnerability database.</p>
+                <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+                    <input id="container-image-input" class="input-modern" type="text" placeholder="e.g. nginx:latest, python:3.12-slim" style="flex:1;">
+                    <button class="btn btn-primary" onclick="runContainerScan()"><span class="btn-icon">🔍</span> Scan Image</button>
+                </div>
+                <div id="container-scan-result"><p style="color:var(--text-muted)">Enter an image name to discover CVEs...</p></div>
+                <div id="compliance-container" style="margin-top:1rem;"></div>
             </div>
-            <div id="compliance-container" style="margin-top: 1rem;"></div>
-        </div>
-    </div>
-
-
-    <!-- Bucket Scan Panel -->
-    <div id="bucket-scan-panel" class="telemetry-panel">
-        <div class="tp-header">
-            <h2><span class="tp-icon">🪣</span> S3 Bucket Security Scanner</h2>
-            <button class="btn-close-tp" id="btn-close-bucket-panel">✖</button>
-        </div>
-        <div class="tp-content" style="padding: 1.5rem; overflow-y: auto;">
-            <div class="scan-controls" style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
-                <input id="s3-bucket-input" class="input-modern" type="text" placeholder="e.g. s3://public-finance-data" style="flex:1;">
-                <button id="btn-s3-scan" class="btn btn-primary" onclick="checkS3Bucket()">
-                    <span class="btn-icon">🔍</span> Scan Bucket
-                </button>
-            </div>
-            <div id="bucket-scan-result" style="margin-bottom: 1rem;">
-                <p style="color:var(--text-muted)">Enter a bucket name to assess ACLs and encryption...</p>
+            <!-- Bucket Tab -->
+            <div id="bucket-tab" class="cloud-tab-content">
+                <p style="color:var(--text-secondary);margin-bottom:1rem;font-size:0.85rem;">Audit S3 / GCS bucket permissions, ACLs, encryption status, and public access exposure.</p>
+                <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+                    <input id="s3-bucket-input" class="input-modern" type="text" placeholder="e.g. s3://public-finance-data" style="flex:1;">
+                    <button class="btn btn-primary" onclick="checkS3Bucket()"><span class="btn-icon">🔍</span> Scan Bucket</button>
+                </div>
+                <div id="bucket-scan-result"><p style="color:var(--text-muted)">Enter a bucket name to assess ACLs and encryption...</p></div>
             </div>
         </div>
     </div>

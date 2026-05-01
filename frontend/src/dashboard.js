@@ -2292,3 +2292,48 @@ window.fetchAgentTelemetry = async function() {
 
 setInterval(window.fetchAgentTelemetry, 5000);
 window.fetchAgentTelemetry();
+
+
+// ═══ Cloud Security Panel (Unified) ═══
+(function initCloudSecurityPanel() {
+    const cloudPanel = document.getElementById('cloud-security-panel');
+    const btnClose = document.getElementById('btn-close-cloud-panel');
+    const tabs = document.querySelectorAll('.cloud-tab');
+    const tabContents = document.querySelectorAll('.cloud-tab-content');
+
+    // Dropdown toggle
+    const dropdown = document.getElementById('cloud-security-dropdown');
+    const btnCloudSec = document.getElementById('btn-cloud-security');
+    if (btnCloudSec) {
+        btnCloudSec.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dropdown.classList.toggle('open');
+        });
+    }
+    document.addEventListener('click', () => { if(dropdown) dropdown.classList.remove('open'); });
+
+    // Sub-item clicks open panel with correct tab
+    const tabMap = { 'btn-cspm-panel':'cspm-tab', 'btn-container-panel':'container-tab', 'btn-bucket-panel':'bucket-tab' };
+    Object.entries(tabMap).forEach(([btnId, tabId]) => {
+        const btn = document.getElementById(btnId);
+        if (btn) btn.addEventListener('click', () => {
+            closeAllPanels();
+            if (cloudPanel) cloudPanel.classList.add('active');
+            activateCloudTab(tabId);
+            if (dropdown) dropdown.classList.remove('open');
+        });
+    });
+
+    // Tab switching
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => activateCloudTab(tab.dataset.tab));
+    });
+
+    function activateCloudTab(tabId) {
+        tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
+        tabContents.forEach(tc => tc.classList.toggle('active', tc.id === tabId));
+    }
+
+    // Close
+    if (btnClose) btnClose.addEventListener('click', () => { if(cloudPanel) cloudPanel.classList.remove('active'); });
+})();

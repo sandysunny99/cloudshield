@@ -1075,7 +1075,7 @@ footer {
 }
 
 /* ------------------------------------------------------------------
-   EXTENDED UI � AI Panel, Container Scanner, Compliance
+   EXTENDED UI  AI Panel, Container Scanner, Compliance
    ------------------------------------------------------------------ */
 
 /* -- AI Analysis Panel -- */
@@ -1300,3 +1300,44 @@ footer {
 }
 
 
+
+
+/* ═══ Cloud Security Dropdown ═══ */
+.nav-dropdown { position: relative; display: inline-block; }
+.dropdown-menu {
+    display: none; position: absolute; top: 100%; left: 0; z-index: 100;
+    min-width: 220px; margin-top: 4px;
+    background: rgba(15, 23, 42, 0.97); border: 1px solid var(--border-glass);
+    border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    backdrop-filter: blur(16px); overflow: hidden;
+    animation: dropFade 0.2s ease;
+}
+@keyframes dropFade { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+.nav-dropdown:hover .dropdown-menu,
+.nav-dropdown.open .dropdown-menu { display: block; }
+.dropdown-item {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 0.65rem 1rem; border: none; background: none;
+    color: var(--text-secondary); font-size: 0.82rem; cursor: pointer;
+    transition: all 0.15s;
+}
+.dropdown-item:hover { background: rgba(59,130,246,0.12); color: #fff; }
+.dropdown-item span { font-size: 1rem; }
+
+/* ═══ Cloud Panel Sub-Tabs ═══ */
+.cloud-tabs {
+    display: flex; gap: 0; border-bottom: 1px solid var(--border-glass);
+    background: rgba(0,0,0,0.15);
+}
+.cloud-tab {
+    flex: 1; padding: 0.7rem 1rem; border: none; background: none;
+    color: var(--text-secondary); font-size: 0.82rem; cursor: pointer;
+    border-bottom: 2px solid transparent; transition: all 0.2s;
+}
+.cloud-tab:hover { color: #fff; background: rgba(255,255,255,0.03); }
+.cloud-tab.active {
+    color: var(--accent-blue); border-bottom-color: var(--accent-blue);
+    background: rgba(59,130,246,0.06);
+}
+.cloud-tab-content { display: none; }
+.cloud-tab-content.active { display: block; }
