@@ -632,6 +632,29 @@ def create_app():
 
         return jsonify({"status": "success", "results": results})
 
+    from services.correlation_engine import process_event
+    
+    @app.route("/api/agent/events", methods=["POST", "OPTIONS"])
+    def api_agent_events():
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+            
+        body = request.get_json(silent=True) or {}
+        hostname = body.get("hostname", "unknown")
+        event_type = body.get("type", "process_anomaly")
+        detail = body.get("detail", "")
+        
+        # Process the raw telemetry in the correlation engine
+        alert = process_event(
+            source="cloudshield-agent",
+            event_type=event_type,
+            detail=detail,
+            ip="noip",
+            hostname=hostname
+        )
+        
+        return jsonify({"status": "success", "correlated_alert": alert}), 200
+
     from flask import Response
 
     @app.route("/api/stream", methods=["GET"])

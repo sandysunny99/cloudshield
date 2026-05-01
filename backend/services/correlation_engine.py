@@ -107,8 +107,15 @@ def _evaluate_rules(hostname: str, ip: str) -> dict:
         total_score += 30 * e["decay_multiplier"]
         tactics.add("Command and Control")
 
+    # Rule 8: Native Agent Process Anomaly
+    agent_anomalies = [e for e in recent_events if e["source"] == "cloudshield-agent"]
+    for e in agent_anomalies:
+        total_score += 50 * e["decay_multiplier"]
+        tactics.add("Execution")
+        tactics.add("Defense Evasion")
+
     # Multi-Stage Tracking Example (Sequence: PS Download -> C2 -> DNS)
-    if wazuh_ps_dl and (suri_c2 or sandbox_beacons or sandbox_dns):
+    if (wazuh_ps_dl or agent_anomalies) and (suri_c2 or sandbox_beacons or sandbox_dns):
         total_score += 50 # Bonus for sequence match
         
     if total_score >= 80:
