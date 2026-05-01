@@ -632,6 +632,23 @@ def create_app():
 
         return jsonify({"status": "success", "results": results})
 
+    from flask import Response
+
+    @app.route("/api/stream", methods=["GET"])
+    def api_stream():
+        """Server-Sent Events (SSE) endpoint for real-time alerts"""
+        def event_stream():
+            pubsub = redis_client.pubsub()
+            pubsub.subscribe("soc:alerts")
+            # Send initial connection success event
+            yield "data: {\"type\": \"connected\", \"message\": \"SSE Stream Established\"}\n\n"
+            
+            for message in pubsub.listen():
+                if message["type"] == "message":
+                    yield f"data: {message['data'].decode('utf-8')}\n\n"
+
+        return Response(event_stream(), mimetype="text/event-stream")
+
     from services.auth_service import verify_credentials, generate_token, decode_token
 
     @app.route("/api/auth/login", methods=["POST", "OPTIONS"])

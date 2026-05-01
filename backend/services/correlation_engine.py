@@ -106,6 +106,11 @@ def _evaluate_rules(hostname: str, ip: str) -> dict:
         
     if correlated_alert:
         logger.warning(f"CORRELATION ENGINE TRIGGER: {correlated_alert['title']} (Score: {int(total_score)})")
+        # Publish alert to SSE stream
+        redis_client.publish("soc:alerts", json.dumps({
+            "type": "alert",
+            "data": correlated_alert
+        }))
         # Flush the buffer related to this context to avoid alert fatigue
         for k in recent_keys:
             redis_client.delete(k)

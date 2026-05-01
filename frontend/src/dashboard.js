@@ -1680,3 +1680,127 @@ window.runThreatHunt = async function() {
         document.getElementById("hunt-results").innerHTML = "<div style='color:var(--color-critical)'>Error reaching Threat Hunt API.</div>";
     }
 };
+
+// ── Real-Time Streaming & Alerts UI ──
+const sseQueue = [];
+
+function initSSE() {
+    const sseStatus = document.createElement("div");
+    sseStatus.id = "sse-status";
+    sseStatus.style = "position:absolute; top: 1rem; right: 1rem; color: var(--color-low); font-size: 0.8rem; display: flex; align-items: center; gap: 0.5rem;";
+    sseStatus.innerHTML = "<div class='status-dot' style='background: orange;'></div> Connecting...";
+    document.body.appendChild(sseStatus);
+
+    const eventSource = new EventSource("/api/stream");
+
+    eventSource.onopen = () => {
+        sseStatus.innerHTML = "<div class='status-dot' style='background: var(--color-low);'></div> Live Stream Connected";
+    };
+
+    eventSource.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "alert") {
+                sseQueue.push(msg.data);
+            }
+        } catch (e) {
+            console.error("SSE Parse Error", e);
+        }
+    };
+
+    eventSource.onerror = () => {
+        sseStatus.innerHTML = "<div class='status-dot' style='background: var(--color-critical);'></div> Stream Disconnected";
+    };
+}
+
+// Process SSE Queue
+setInterval(() => {
+    if (sseQueue.length > 0) {
+        const batch = sseQueue.splice(0, 5);
+        batch.forEach(addLiveAlertToTable);
+    }
+}, 1000);
+
+function addLiveAlertToTable(alertData) {
+    const tableBody = document.querySelector("#attack-dashboard table");
+    if (!tableBody) return;
+    
+    // Only use tbody
+    let tbody = tableBody.querySelector("tbody") || tableBody;
+    
+    const row = document.createElement("tr");
+    row.className = "new-alert";
+    
+    const severityColor = alertData.severity === "CRITICAL" ? "var(--color-critical)" : 
+                          alertData.severity === "HIGH" ? "var(--color-high)" : "var(--color-med)";
+                          
+    row.style = `border-left: 3px solid ${severityColor}; cursor: pointer; transition: background 0.3s ease;`;
+    
+    row.innerHTML = `
+        <td>${new Date().toLocaleTimeString()}</td>
+        <td style="color:${severityColor}; font-weight:600;">${alertData.severity}</td>
+        <td>${escapeHtml(alertData.title)}</td>
+        <td>Score: ${alertData.score} | TI: ${alertData.ti_enrichment || 0}</td>
+    `;
+    
+    // Drill down logic
+    row.addEventListener("click", () => showAlertDrillDown(alertData));
+    
+    // Prepend to top
+    if(tbody.firstChild) {
+        tbody.insertBefore(row, tbody.firstChild);
+    } else {
+        tbody.appendChild(row);
+    }
+    
+    // Remove highlight after 4s
+    setTimeout(() => {
+        row.style.background = "transparent";
+    }, 4000);
+}
+
+function showAlertDrillDown(alertData) {
+    let drillDown = document.getElementById("alert-drilldown-modal");
+    if(!drillDown) {
+        drillDown = document.createElement("div");
+        drillDown.id = "alert-drilldown-modal";
+        drillDown.style = "position:fixed; top:10%; right:2rem; width: 400px; background:var(--bg-glass); border:1px solid var(--border-glass); padding: 1.5rem; z-index:9999; backdrop-filter:blur(10px); box-shadow: 0 0 30px rgba(0,0,0,0.8);";
+        document.body.appendChild(drillDown);
+    }
+    
+    const tacticsHtml = (alertData.tactics || []).map(t => `<span style="background:rgba(255,255,255,0.1); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.8rem; margin-right:4px;">${t}</span>`).join("");
+    
+    drillDown.innerHTML = `
+        <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-glass); padding-bottom:1rem; margin-bottom:1rem;">
+            <h3 style="margin:0; color:var(--text-bright)">Alert Detail</h3>
+            <button onclick="document.getElementById('alert-drilldown-modal').remove()" style="background:none; border:none; color:var(--text-muted); cursor:pointer;">X</button>
+        </div>
+        <div style="margin-bottom:1rem">
+            <strong>${alertData.title}</strong>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.5rem; margin-bottom:1rem;">
+            <div><strong>Severity:</strong> <span style="color:var(--color-critical)">${alertData.severity}</span></div>
+            <div><strong>Score:</strong> ${alertData.score}</div>
+            <div><strong>TI Enrichment:</strong> ${alertData.ti_enrichment || 'N/A'}</div>
+        </div>
+        <div style="margin-bottom:1rem;">
+            <strong>Tactics:</strong>
+            <div style="margin-top:0.5rem;">${tacticsHtml}</div>
+        </div>
+        <div>
+            <strong>Raw JSON:</strong>
+            <pre style="background:rgba(0,0,0,0.5); padding:1rem; font-size:0.8rem; overflow-x:auto; margin-top:0.5rem; border:1px solid var(--border-glass); color:var(--text-muted)">${JSON.stringify(alertData, null, 2)}</pre>
+        </div>
+        <div style="margin-top:1rem; text-align:right;">
+            <button onclick="createCaseFromAlert('${escapeHtml(alertData.title)}')" class="btn">Create Case</button>
+        </div>
+    `;
+}
+
+function createCaseFromAlert(title) {
+    showToast("Case creation feature invoked (Backend handles this).", "info");
+    // Connect to /api/cases POST in reality
+}
+
+// Initialize SSE on load
+setTimeout(initSSE, 1000);
