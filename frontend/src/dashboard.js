@@ -1813,3 +1813,212 @@ function createCaseFromAlert(title) {
 
 // Initialize SSE on load
 setTimeout(initSSE, 1000);
+
+// ── Case Management UI Logic ──
+let allCases = [];
+
+const btnCasesPanel = document.getElementById('btn-cases-panel');
+const casesPanel = document.getElementById('cases-panel');
+const btnCloseCasesPanel = document.getElementById('btn-close-cases-panel');
+
+if(btnCasesPanel && casesPanel && btnCloseCasesPanel) {
+    btnCasesPanel.addEventListener('click', () => {
+        closeAllPanels();
+        casesPanel.classList.add('active');
+        fetchCases();
+    });
+    btnCloseCasesPanel.addEventListener('click', () => {
+        casesPanel.classList.remove('active');
+    });
+}
+
+function closeAllPanels() {
+    document.querySelectorAll('.telemetry-panel').forEach(p => p.classList.remove('active'));
+}
+
+async function fetchCases() {
+    try {
+        const res = await fetch('/api/cases');
+        if (!res.ok) throw new Error("Failed to fetch cases");
+        const data = await res.json();
+        allCases = data.data || [];
+        renderCases();
+    } catch (e) {
+        console.error(e);
+        showToast("Error loading cases", "error");
+    }
+}
+
+function renderCases() {
+    const tableBody = document.querySelector('#cases-table tbody');
+    if (!tableBody) return;
+    
+    const filterStatus = document.getElementById('case-status-filter').value;
+    const searchVal = document.getElementById('case-search').value.toLowerCase();
+    
+    let filtered = allCases.filter(c => {
+        const matchStatus = filterStatus === 'all' || c.status === filterStatus;
+        const matchSearch = c.title.toLowerCase().includes(searchVal) || 
+                            (c.description || "").toLowerCase().includes(searchVal);
+        return matchStatus && matchSearch;
+    });
+    
+    // Sort descending by created_at
+    filtered.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    tableBody.innerHTML = '';
+    
+    if (filtered.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No cases found.</td></tr>';
+        return;
+    }
+    
+    filtered.forEach(c => {
+        const tr = document.createElement('tr');
+        
+        let statusBadge = "background:var(--color-med)";
+        if(c.status === "open") statusBadge = "background:var(--color-critical)";
+        if(c.status === "investigating") statusBadge = "background:var(--color-high)";
+        
+        tr.innerHTML = `
+            <td><strong>${c.id}</strong></td>
+            <td><span style="padding:0.2rem 0.5rem; border-radius:4px; font-size:0.7rem; color:white; ${statusBadge}">${c.status.toUpperCase()}</span></td>
+            <td>${escapeHtml(c.title)}</td>
+            <td>${c.assigned_to === 'unassigned' ? `<button class="btn btn-outline" style="font-size:0.7rem; padding:0.2rem 0.5rem;" onclick="quickAssign('${c.id}')">Claim</button>` : escapeHtml(c.assigned_to)}</td>
+            <td>${c.created_at}</td>
+            <td><button class="btn" onclick="openCaseDrillDown('${c.id}')">View</button></td>
+        `;
+        tableBody.appendChild(tr);
+    });
+}
+
+// Bind filters
+const caseSearch = document.getElementById('case-search');
+const caseStatusFilter = document.getElementById('case-status-filter');
+if(caseSearch) caseSearch.addEventListener('input', renderCases);
+if(caseStatusFilter) caseStatusFilter.addEventListener('change', renderCases);
+
+async function quickAssign(caseId) {
+    try {
+        const res = await fetch(`/api/cases/${caseId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({assigned_to: "analyst1"}) // Mock user
+        });
+        if(res.ok) {
+            showToast(`Case ${caseId} assigned to you`, "success");
+            fetchCases();
+        }
+    } catch(e) {
+        showToast("Assignment failed", "error");
+    }
+}
+
+async function promptCreateCase() {
+    const title = prompt("Enter Case Title:");
+    if (!title) return;
+    try {
+        const res = await fetch('/api/cases', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({title: title, description: "Manually created investigation."})
+        });
+        if(res.ok) {
+            showToast("Case created successfully", "success");
+            fetchCases();
+        }
+    } catch(e) {
+        showToast("Case creation failed", "error");
+    }
+}
+
+// Override the old drilldown case creation link
+window.createCaseFromAlert = async function(title) {
+    try {
+        const res = await fetch('/api/cases', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({title: "Investigating: " + title, description: "Auto-generated from alert."})
+        });
+        if(res.ok) {
+            showToast("Case created from alert!", "success");
+            document.getElementById('alert-drilldown-modal')?.remove();
+            if(casesPanel) {
+                closeAllPanels();
+                casesPanel.classList.add('active');
+                fetchCases();
+            }
+        }
+    } catch(e) {
+        showToast("Case creation failed", "error");
+    }
+}
+
+function openCaseDrillDown(caseId) {
+    const c = allCases.find(x => x.id === caseId);
+    if(!c) return;
+    
+    let drillDown = document.getElementById("case-drilldown-modal");
+    if(!drillDown) {
+        drillDown = document.createElement("div");
+        drillDown.id = "case-drilldown-modal";
+        drillDown.style = "position:fixed; top:5%; left:50%; transform:translateX(-50%); width: 600px; max-height:80vh; overflow-y:auto; background:var(--bg-glass); border:1px solid var(--border-glass); padding: 1.5rem; z-index:9999; backdrop-filter:blur(10px); box-shadow: 0 0 30px rgba(0,0,0,0.8);";
+        document.body.appendChild(drillDown);
+    }
+    
+    const timelineHtml = (c.timeline || []).map(t => `<div style="margin-bottom:8px; border-left:2px solid var(--color-accent); padding-left:10px;"><span style="color:var(--text-muted);font-size:0.8rem;">${t.timestamp}</span><br><strong>${t.user}</strong>: ${t.action}</div>`).join("");
+    const commentsHtml = (c.comments || []).map(cmt => `<div style="background:rgba(0,0,0,0.3); padding:0.5rem; margin-bottom:8px; border-radius:4px;"><span style="color:var(--text-muted);font-size:0.8rem;">${cmt.timestamp} - ${cmt.user}</span><br>${escapeHtml(cmt.text)}</div>`).join("");
+    
+    drillDown.innerHTML = `
+        <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-glass); padding-bottom:1rem; margin-bottom:1rem;">
+            <h3 style="margin:0; color:var(--text-bright)">Case: ${c.id}</h3>
+            <button onclick="document.getElementById('case-drilldown-modal').remove()" style="background:none; border:none; color:var(--text-muted); cursor:pointer;">X</button>
+        </div>
+        <div style="margin-bottom:1rem">
+            <strong>${escapeHtml(c.title)}</strong>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.5rem; margin-bottom:1rem;">
+            <div><strong>Status:</strong> ${c.status} <button onclick="updateCaseStatus('${c.id}')" style="background:none; border:none; color:var(--color-accent); cursor:pointer; text-decoration:underline;">Change</button></div>
+            <div><strong>Assigned:</strong> ${c.assigned_to}</div>
+        </div>
+        <div style="margin-bottom:1rem;">
+            <strong>Timeline:</strong>
+            <div style="margin-top:0.5rem; background:rgba(0,0,0,0.2); padding:1rem;">${timelineHtml}</div>
+        </div>
+        <div style="margin-bottom:1rem;">
+            <strong>Analyst Notes:</strong>
+            <div style="margin-top:0.5rem;">${commentsHtml || "<span style='color:var(--text-muted)'>No notes yet.</span>"}</div>
+            <div style="margin-top:1rem; display:flex; gap:0.5rem;">
+                <input type="text" id="case-new-comment-${c.id}" class="input-modern" style="flex:1" placeholder="Add an investigation note...">
+                <button class="btn btn-outline" onclick="addCaseComment('${c.id}')">Add</button>
+            </div>
+        </div>
+    `;
+}
+
+window.updateCaseStatus = async function(caseId) {
+    const status = prompt("Enter new status (open, investigating, closed):");
+    if(!status || !["open", "investigating", "closed"].includes(status.toLowerCase())) {
+        alert("Invalid status"); return;
+    }
+    await fetch(`/api/cases/${caseId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status: status.toLowerCase()})
+    });
+    fetchCases();
+    setTimeout(() => openCaseDrillDown(caseId), 500); // refresh modal
+}
+
+window.addCaseComment = async function(caseId) {
+    const input = document.getElementById(`case-new-comment-${caseId}`);
+    if(!input || !input.value) return;
+    await fetch(`/api/cases/${caseId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({comment: input.value})
+    });
+    input.value = "";
+    fetchCases();
+    setTimeout(() => openCaseDrillDown(caseId), 500); // refresh modal
+}
