@@ -50,16 +50,16 @@ Built with enterprise compliance in mind: **CIS Benchmarks**, **NIST 800-53**, *
 - **S3 / Storage Audit** — Assess bucket ACLs, encryption status, and public exposure
 
 ### 🔬 SOC & Threat Intelligence
-- **Threat Hunting (VQL)** — Velociraptor-style queries across your endpoint fleet
-- **Attack Dashboard** — Real-time WAF edge blocks and spoofing origin tracking
-- **SOC Event Stream** — Live security event log with severity-coded timeline
-- **Security Alerts** — Correlated alerts from agent telemetry and cloud scans
+- **Threat Hunting (VQL)** — Advanced VQL syntax parser (e.g. `SELECT * FROM ... WHERE ...`) mapping over SQLite and OpenSearch.
+- **Attack Dashboard** — Real-time WAF edge blocks and spoofing origin tracking.
+- **SOC Event Stream** — Live security event log with severity-coded timeline.
+- **Security Alerts** — Correlated alerts from agent telemetry and cloud scans.
 
 ### 💻 Endpoint Detection & Response
-- **EDR Agent** — Lightweight Python agent with process anomaly detection
-- **HMAC-Signed Telemetry** — Cryptographically verified agent-to-backend communication
-- **Fleet Management** — Monitor all connected endpoints with health scoring
-- **Trivy Integration** — Background CVE scanning on agent hosts
+- **EDR Agent** — Lightweight Python agent with rich execution path anomaly detection.
+- **HMAC-Signed Telemetry** — Cryptographically verified agent-to-backend communication.
+- **Fleet Management** — Monitor all connected endpoints with health scoring.
+- **Trivy Integration** — Background CVE scanning on agent hosts.
 
 ### ☢️ Malware Sandbox
 - **Detonation Engine** — Analyze suspicious URLs, IPs, and file hashes
@@ -185,12 +185,14 @@ cloudshield/
 
 ---
 
-## 🌐 Live Deployment
+## 🌐 Live Deployment & CI/CD
 
-| Component | URL |
-|-----------|-----|
-| **Dashboard** | [cloudshield-vtah.vercel.app](https://cloudshield-vtah.vercel.app) |
-| **API** | [cloudshield-tya3.onrender.com](https://cloudshield-tya3.onrender.com) |
+| Component | Architecture | URL |
+|-----------|--------------|-----|
+| **Dashboard** | `Vercel` (Serverless Edge) | [cloudshield-vtah.vercel.app](https://cloudshield-vtah.vercel.app) |
+| **API** | `Render` (Gunicorn/Flask) | [cloudshield-tya3.onrender.com](https://cloudshield-tya3.onrender.com) |
+
+> Note: A global `vercel.json` is included in the root directory to properly route GitHub push triggers into the `/frontend` directory. This ensures multiple hooked projects build successfully without path confusion.
 
 ---
 
