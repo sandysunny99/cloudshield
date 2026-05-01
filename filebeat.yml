@@ -13,7 +13,8 @@ setup.template.settings:
 
 output.elasticsearch:
   hosts: ["http://opensearch:9200"]
-  index: "suricata-events-%{+yyyy.MM.dd}"
+  index: "suricata-events"
 
+setup.ilm.enabled: false
 setup.template.name: "suricata"
 setup.template.pattern: "suricata-events-*"

@@ -64,6 +64,19 @@ services:
           memory: 4g
           cpus: "2.0"
 
+  opensearch-setup:
+    image: python:3.10-alpine
+    container_name: cloudshield-opensearch-setup
+    profiles: ["prod"]
+    depends_on:
+      - opensearch
+    volumes:
+      - ./backend/scripts:/scripts
+    environment:
+      - OPENSEARCH_URL=http://opensearch:9200
+    command: >
+      sh -c "pip install requests && python /scripts/init_opensearch_ilm.py"
+
   wazuh-manager:
     image: wazuh/wazuh-manager:4.7.2
     container_name: cloudshield-wazuh
