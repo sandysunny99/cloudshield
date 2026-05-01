@@ -342,7 +342,7 @@ def create_app():
     def get_cf_ip():
         return request.headers.get("CF-Connecting-IP", get_remote_address())
 
-    limiter = Limiter(get_cf_ip, app=app, default_limits=["200 per day", "50 per hour"])
+    limiter = Limiter(get_cf_ip, app=app, default_limits=["20000 per day", "5000 per hour"])
 
     # ── SOC Event Timeline (in-memory, last 100 events) ──
     SOC_TIMELINE = []
