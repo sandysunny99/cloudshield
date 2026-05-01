@@ -1,23 +1,25 @@
 import json
 import logging
+import os
+import redis
 from mitmproxy import http
 
-# Set up simple logging to file
+# Connect to Redis
+REDIS_URL = os.environ.get("REDIS_URL", "redis://cloudshield-redis:6379")
+redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
 logger = logging.getLogger('mitmproxy_traffic')
-logger.setLevel(logging.INFO)
-fh = logging.FileHandler('/logs/proxy_traffic.log')
-fh.setFormatter(logging.Formatter('%(message)s'))
-logger.addHandler(fh)
 
 def request(flow: http.HTTPFlow) -> None:
     """
     Called whenever mitmproxy intercepts a new HTTP request.
-    Extracts relevant IOCs and saves them as JSON to be picked up by the Sandbox backend.
+    Extracts relevant IOCs and publishes them to Redis.
     """
     req = flow.request
     
-    # We ignore standard docker or proxy heartbeat domains if needed,
-    # but here we log everything for the sandbox.
+    # We extract the sandbox IP to correlate with the analysis ID
+    client_ip = flow.client_conn.peername[0] if flow.client_conn.peername else "unknown"
+    
     data = {
         "event_type": "sandbox_http_beacon",
         "method": req.method,
@@ -26,10 +28,14 @@ def request(flow: http.HTTPFlow) -> None:
         "scheme": req.scheme,
         "port": req.port,
         "user_agent": req.headers.get("User-Agent", ""),
-        "timestamp": flow.client_conn.timestamp_start
+        "timestamp": flow.client_conn.timestamp_start,
+        "client_ip": client_ip
     }
     
-    logger.info(json.dumps(data))
+    try:
+        redis_client.publish("sandbox:traffic", json.dumps(data))
+    except Exception as e:
+        logger.error(f"Failed to publish to redis: {e}")
     
 def response(flow: http.HTTPFlow) -> None:
     pass

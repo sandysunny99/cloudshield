@@ -1789,9 +1789,11 @@ function showAlertDrillDown(alertData) {
             <div style="margin-top:0.5rem;">${tacticsHtml}</div>
         </div>
                 <div style="margin-bottom:1rem;">
-            <strong>Network Activity:</strong>
-            <div style="margin-top:0.5rem; color:var(--text-bright); font-family:monospace; font-size:0.8rem; background:rgba(0,0,0,0.3); padding:0.5rem; border-left: 2px solid var(--color-med);">
-                ${(alertData.network || []).map(n => escapeHtml(n)).join("<br>") || "<span style='color:var(--text-muted)'>No captured network events.</span>"}
+            <strong>Investigation Timeline:</strong>
+            <div style="margin-top:0.5rem; color:var(--text-bright); font-size:0.8rem; background:rgba(0,0,0,0.3); padding:0.5rem; border-left: 2px solid var(--color-med);">
+                ${(alertData.network || []).map(n => `<div style="margin-bottom:4px"><span style="color:var(--text-muted)">[NETWORK]</span> ${escapeHtml(n)}</div>`).join("") || ""}
+                ${(alertData.tactics || []).map(t => `<div style="margin-bottom:4px"><span style="color:var(--color-high)">[TACTIC]</span> ${escapeHtml(t)} Match</div>`).join("") || ""}
+                ${alertData.analysis_id ? `<div style="margin-bottom:4px"><span style="color:var(--color-critical)">[ANALYSIS]</span> Job ID: ${escapeHtml(alertData.analysis_id)}</div>` : ""}
             </div>
         </div>
         <div>

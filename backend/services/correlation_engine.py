@@ -96,15 +96,24 @@ def _evaluate_rules(hostname: str, ip: str) -> dict:
     for e in sandbox_beacons:
         total_score += 40 * e["decay_multiplier"]
         tactics.add("Command and Control")
-        if ti_score > 80:
-            total_score += 50 * e["decay_multiplier"] # Bonus for beaconing to highly malicious IP
+        # Ensure TI score doesn't blow up the total score
+        if ti_score > 50:
+            boost = min(50, ti_score * 0.5)
+            total_score += boost * e["decay_multiplier"]
 
-    # Multi-Stage Tracking Example (Sequence: PS Download -> C2)
-    if wazuh_ps_dl and (suri_c2 or sandbox_beacons):
+    # Rule 7: Suspicious DNS Query
+    sandbox_dns = [e for e in recent_events if e["source"] == "sandbox" and e["type"] == "suspicious_dns_query"]
+    for e in sandbox_dns:
+        total_score += 30 * e["decay_multiplier"]
+        tactics.add("Command and Control")
+
+    # Multi-Stage Tracking Example (Sequence: PS Download -> C2 -> DNS)
+    if wazuh_ps_dl and (suri_c2 or sandbox_beacons or sandbox_dns):
         total_score += 50 # Bonus for sequence match
         
     if total_score >= 80:
         correlated_alert = {
+            "analysis_id": hostname,  # Treat hostname context as analysis_id for sandbox
             "title": f"High-Confidence Correlated Attack (Score: {int(total_score)})",
             "severity": "CRITICAL" if total_score > 120 else "HIGH",
             "score": int(total_score),
