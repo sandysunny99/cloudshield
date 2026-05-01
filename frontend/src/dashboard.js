@@ -1597,3 +1597,86 @@ startSaaSPerformanceHub();
  
   
  
+// ── ANY.RUN / Malware Sandbox Integration (Real Backend) ──
+window.openSandbox = function() {
+    document.querySelectorAll(".section").forEach(s => s.classList.add("hidden"));
+    document.getElementById("sandbox-panel").classList.remove("hidden");
+};
+
+window.detonateSandbox = async function() {
+    const target = document.getElementById("sandbox-target").value;
+    if (!target) { showToast("Enter a target hash, IP or URL", "warning"); return; }
+    
+    document.getElementById("sandbox-results").style.display = "block";
+    document.getElementById("sandbox-process-tree").innerHTML = "<div style='padding:1rem;color:var(--color-high)'>Booting secure container... Dispatching target...</div>";
+    document.getElementById("sandbox-network").innerHTML = "<div style='padding:0.5rem;'>Analyzing network streams...</div>";
+    document.getElementById("sandbox-iocs").innerHTML = "";
+    
+    showToast("Detonation started in Isolated Sandbox", "info");
+    
+    try {
+        const res = await fetch("/api/sandbox/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target })
+        });
+        const data = await res.json();
+        
+        if(data.status === "success") {
+            const processes = data.data.processes.map(p => "<div style='margin-bottom:4px'>└─ " + escapeHtml(p) + "</div>").join("") || "<div style='color:var(--text-muted)'>No suspicious processes detected.</div>";
+            const network = data.data.network.map(n => "<div style='color:var(--color-critical)'>⚠️ " + escapeHtml(n) + "</div>").join("") || "<div style='color:var(--text-muted)'>No outbound connections.</div>";
+            const iocs = data.data.iocs.map(i => "<div>" + escapeHtml(i) + "</div>").join("");
+            
+            document.getElementById("sandbox-process-tree").innerHTML = processes;
+            document.getElementById("sandbox-network").innerHTML = network;
+            document.getElementById("sandbox-iocs").innerHTML = iocs || "<div>Target: " + escapeHtml(data.data.target) + "</div>";
+            showToast("Detonation complete. IOCs extracted.", "success");
+            addSocEvent("WARNING", "Sandbox Detonation Completed for: " + target);
+        } else {
+            showToast("Sandbox failed: " + data.message, "error");
+        }
+    } catch(err) {
+        showToast("Sandbox connection error.", "error");
+    }
+};
+
+document.getElementById("btn-siem-panel").addEventListener("click", () => {
+    document.querySelectorAll(".section").forEach(s => s.classList.add("hidden"));
+    document.getElementById("attack-dashboard").classList.remove("hidden");
+});
+
+document.getElementById("btn-hunt-panel").addEventListener("click", () => {
+    document.querySelectorAll(".section").forEach(s => s.classList.add("hidden"));
+    document.getElementById("hunt-panel").classList.remove("hidden");
+});
+
+window.runThreatHunt = async function() {
+    const q = document.getElementById("vql-query").value;
+    if (!q) { showToast("Enter a query", "warning"); return; }
+    
+    document.getElementById("hunt-results").style.display = "block";
+    document.getElementById("hunt-results").innerHTML = "<div style='padding:1rem;color:var(--color-high)'>Dispatching Query to OpenSearch/Velociraptor...</div>";
+    
+    try {
+        const res = await fetch("/api/hunt", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: q })
+        });
+        const data = await res.json();
+        
+        if(data.status === "success") {
+            let html = "<table style='width:100%; border-collapse: collapse; text-align: left;'><tr style='border-bottom: 1px solid var(--border-glass)'><th>Timestamp</th><th>Endpoint</th><th>Match Detail</th></tr>";
+            data.results.forEach(r => {
+                html += `<tr><td>${r.timestamp}</td><td>${r.endpoint}</td><td style='color:var(--color-critical)'>${escapeHtml(r.detail)}</td></tr>`;
+            });
+            html += "</table>";
+            if(data.results.length === 0) html = "<div style='padding:1rem;color:var(--color-low)'>No matches found across fleet.</div>";
+            
+            document.getElementById("hunt-results").innerHTML = html;
+            showToast(`Hunt Complete. ${data.results.length} Matches Found.`, "warning");
+        }
+    } catch(err) {
+        document.getElementById("hunt-results").innerHTML = "<div style='color:var(--color-critical)'>Error reaching Threat Hunt API.</div>";
+    }
+};

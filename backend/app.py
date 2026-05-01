@@ -609,6 +609,80 @@ def create_app():
         result = enrich_cve(cve_id)
         return jsonify({"status": "success", "data": result})
 
+    from services.sandbox_service import detonate_target
+
+    from services.opensearch_service import execute_hunt_query
+
+    @app.route("/api/hunt", methods=["POST", "OPTIONS"])
+    @limiter.limit("10 per minute")
+    def api_threat_hunt():
+        """Velociraptor-style Threat Hunting over SIEM"""
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        
+        body = request.get_json(silent=True) or {}
+        query = body.get("query", "").strip()
+        if not query:
+            return jsonify({"status": "error", "message": "query field is required"}), 400
+
+        results = execute_hunt_query(query)
+        
+        if results:
+            trigger_alert("WARNING", "threat_hunt", f"Threat Hunt query matched {len(results)} endpoints.")
+
+        return jsonify({"status": "success", "results": results})
+
+    from services.auth_service import verify_credentials, generate_token, decode_token
+
+    @app.route("/api/auth/login", methods=["POST", "OPTIONS"])
+    @limiter.limit("5 per minute")
+    def api_auth_login():
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        
+        body = request.get_json(silent=True) or {}
+        username = body.get("username", "")
+        password = body.get("password", "")
+        
+        user = verify_credentials(username, password)
+        if not user:
+            return jsonify({"status": "error", "message": "Invalid credentials"}), 401
+            
+        token = generate_token(username, user["role"])
+        return jsonify({"status": "success", "token": token, "user": {"name": user["name"], "role": user["role"]}})
+
+    @app.route("/api/auth/me", methods=["GET"])
+    def api_auth_me():
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"status": "error", "message": "Missing token"}), 401
+            
+        token = auth_header.split(" ")[1]
+        decoded = decode_token(token)
+        if "error" in decoded:
+            return jsonify({"status": "error", "message": decoded["error"]}), 401
+            
+        return jsonify({"status": "success", "user": {"username": decoded["sub"], "role": decoded["role"]}})
+
+    @app.route("/api/sandbox/analyze", methods=["POST", "OPTIONS"])
+    @limiter.limit("5 per minute")
+    def api_sandbox_analyze():
+        """ANY.RUN style interactive sandbox detonation"""
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        body = request.get_json(silent=True) or {}
+        target = body.get("target", "").strip()
+        if not target:
+            return jsonify({"status": "error", "message": "target field is required"}), 400
+
+        result = detonate_target(target)
+        
+        # Correlate Sandbox alert
+        if result.get("status") == "completed" and result.get("iocs"):
+            trigger_alert("HIGH", "sandbox", f"Malicious execution detected in sandbox for target: {target}")
+
+        return jsonify({"status": "success", "data": result})
+
     @app.route("/api/alerts", methods=["GET"])
     def api_alerts():
         """Return recent system alerts."""

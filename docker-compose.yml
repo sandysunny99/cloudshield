@@ -1,7 +1,7 @@
 version: "3.9"
 
 services:
-  # ── Core Services ──
+  # ── Core Services (Always run) ──
   redis:
     image: redis:7-alpine
     container_name: cloudshield-redis
@@ -22,6 +22,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - TRIVY_SERVER_URL=http://trivy:4954
       - WAZUH_API_URL=https://wazuh.local:55000
+      - OPENSEARCH_URL=http://opensearch:9200
     depends_on:
       redis:
         condition: service_healthy
@@ -44,34 +45,69 @@ services:
     ports:
       - "4954:4954"
 
-  # ── SIEM & EDR Subsystem (OpenSearch + Wazuh) ──
-  # Note: These require 8GB+ RAM. Uncomment to deploy locally.
-  #
-  # opensearch:
-  #   image: opensearchproject/opensearch:2.11.0
-  #   container_name: cloudshield-siem
-  #   environment:
-  #     - discovery.type=single-node
-  #     - plugins.security.disabled=true
-  #     - "OPENSEARCH_JAVA_OPTS=-Xms1024m -Xmx1024m"
-  #   ports:
-  #     - "9200:9200"
-  #
-  # wazuh-manager:
-  #   image: wazuh/wazuh-manager:4.7.2
-  #   container_name: cloudshield-wazuh
-  #   ports:
-  #     - "1514:1514/tcp"  # Agent connection
-  #     - "55000:55000"    # API
-  #   depends_on:
-  #     - opensearch
-  #
-  # suricata:
-  #   image: jasonish/suricata:latest
-  #   container_name: cloudshield-ids
-  #   network_mode: "host" # Needs host network to sniff traffic
-  #   cap_add:
-  #     - NET_ADMIN
-  #     - NET_RAW
-  #   volumes:
-  #     - ./suricata/logs:/var/log/suricata
+  # ── Enterprise SOC Stack (Requires 8-16GB RAM) ──
+  # Run with: docker-compose --profile prod up
+
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: cloudshield-opensearch
+    profiles: ["prod"]
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms2048m -Xmx2048m"
+    ports:
+      - "9200:9200"
+
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.7.2
+    container_name: cloudshield-wazuh
+    profiles: ["prod"]
+    ports:
+      - "1514:1514/tcp"  # Agent connection
+      - "55000:55000"    # API
+    depends_on:
+      - opensearch
+
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: cloudshield-suricata
+    profiles: ["prod"]
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./suricata/logs:/var/log/suricata
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.12.0
+    container_name: cloudshield-filebeat
+    profiles: ["prod"]
+    user: root
+    command: filebeat -e -strict.perms=false
+    volumes:
+      - ./suricata/logs:/var/log/suricata:ro
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+    depends_on:
+      - opensearch
+      - suricata
+
+  # ── Malware Sandbox Detonation Engine ──
+  # Optional local sandbox execution (Uses Docker inside Docker or isolated container)
+  sandbox:
+    image: docker:dind
+    container_name: cloudshield-sandbox
+    profiles: ["sandbox"]
+    privileged: true
+    environment:
+      - DOCKER_TLS_CERTDIR=/certs
+    volumes:
+      - sandbox-certs-ca:/certs/ca
+      - sandbox-certs-client:/certs/client
+    ports:
+      - "2376:2376"
+
+volumes:
+  sandbox-certs-ca:
+  sandbox-certs-client:

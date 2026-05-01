@@ -1,0 +1,19 @@
+filebeat.inputs:
+- type: filestream
+  id: suricata-logs
+  enabled: true
+  paths:
+    - /var/log/suricata/eve.json
+  json.keys_under_root: true
+  json.overwrite_keys: true
+  json.add_error_key: true
+
+setup.template.settings:
+  index.number_of_shards: 1
+
+output.elasticsearch:
+  hosts: ["http://opensearch:9200"]
+  index: "suricata-events-%{+yyyy.MM.dd}"
+
+setup.template.name: "suricata"
+setup.template.pattern: "suricata-events-*"
