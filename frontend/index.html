@@ -21,19 +21,19 @@
             </a>
             <div class="header-actions">
                 <button id="btn-scan" class="btn btn-primary" onclick="runScan()" aria-label="Run full security scan">
-                    <span class="btn-icon">⚡</span> Run Scan
+                    <span class="btn-icon">⚡</span> Run EDR Scan
                 </button>
-                <button id="btn-demo" class="btn btn-accent" onclick="runDemo()" aria-label="Run before/after demo scan">
-                    <span class="pulse-dot"></span> Demo Scan
+                <button id="btn-sandbox" class="btn btn-accent" onclick="openSandbox()" aria-label="Launch Sandbox Detonation">
+                    <span class="pulse-dot" style="background:#8b5cf6;box-shadow:0 0 10px #8b5cf6;"></span> Malware Sandbox
                 </button>
-                <button class="btn btn-outline" id="btn-paste-panel" aria-label="Open paste &amp; scan panel">
-                    <span class="btn-icon">📋</span> Paste &amp; Scan
-                </button>
-                <button class="btn btn-outline" id="btn-storage-panel" aria-label="Open cloud storage scanner">
-                    <span class="btn-icon">☁️</span> Storage
+                <button class="btn btn-outline" id="btn-siem-panel" aria-label="Open SIEM & Network telemetry">
+                    <span class="btn-icon">🌐</span> Network (Suricata)
                 </button>
                 <button class="btn btn-outline" id="btn-telemetry-panel" aria-label="Open agent telemetry panel">
-                    <span class="btn-icon">💻</span> Endpoints
+                    <span class="btn-icon">💻</span> EDR (Wazuh)
+                </button>
+                <button class="btn btn-outline" id="btn-hunt-panel" aria-label="Open Threat Hunting">
+                    <span class="btn-icon">🔬</span> Threat Hunting (Velociraptor)
                 </button>
                 <button id="btn-export-report" class="btn btn-outline" onclick="exportReport()" aria-label="Download full security report JSON">
                     <span class="btn-icon">📥</span> Export Report
@@ -69,96 +69,90 @@
     </div>
 
     <main id="dashboard-main">
-        <!-- Config Paste Panel -->
-        <section id="config-panel" class="section config-panel hidden">
-            <h2 class="section-title">📋 Paste Cloud Configuration</h2>
-            <p class="config-description">Paste your raw AWS/Cloud configuration (JSON or YAML) below. CloudShield will analyze it for misconfigurations, compliance violations, and security issues.</p>
-            <div class="config-controls">
-                <div class="config-type-selector">
-                    <label class="radio-label">
-                        <input type="radio" name="config-type" value="json" checked> JSON
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="config-type" value="yaml"> YAML
-                    </label>
+        <!-- Malware Detonation Sandbox (ANY.RUN Style) (NEW) -->
+        <section id="sandbox-panel" class="section config-panel hidden" style="border-color: #8b5cf6; background: linear-gradient(180deg, rgba(139,92,246,0.05) 0%, transparent 100%);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                    <h2 class="section-title" style="color: #a78bfa;">☢️ Interactive Malware Sandbox</h2>
+                    <p class="config-description">Detonate suspicious files, URLs, or hashes in an isolated environment. Uses ANY.RUN API for real-time behavior analysis and process tree mapping.</p>
                 </div>
-                <div class="config-templates">
-                    <button class="btn btn-sm" onclick="loadSampleBadConfig()">📥 Load Bad Config (Sample)</button>
-                    <button class="btn btn-sm" onclick="clearConfigEditor()">🗑️ Clear</button>
+                <div>
+                    <span class="badge" style="background: rgba(139,92,246,0.2); color: #c4b5fd; border: 1px solid #8b5cf6;">Environment: Windows 11 Secure VM</span>
                 </div>
             </div>
-            <textarea id="config-editor" class="config-editor" aria-label="Paste cloud configuration JSON or YAML" placeholder='Paste your cloud configuration here...
-
-Example JSON:
-{
-  "s3_buckets": [
-    {
-      "name": "my-bucket",
-      "acl": "public-read",
-      "encryption": { "enabled": false },
-      "logging": { "enabled": false }
-    }
-  ],
-  "iam_roles": [
-    {
-      "name": "admin-role",
-      "mfa_required": false,
-      "policies": [
-        { "name": "full-access", "action": "*", "resource": "*" }
-      ]
-    }
-  ]
-}'></textarea>
-            <div class="config-actions">
-                <button id="btn-analyze" class="btn btn-primary btn-lg" onclick="scanRawConfig()">
-                    <span class="btn-icon">🔍</span> Analyze Configuration
+            
+            <div class="s3-input-group" style="display: flex; gap: 1rem; align-items: center; margin-top: 1rem;">
+                <input type="text" id="sandbox-target" aria-label="Enter URL, IP, or SHA256 hash" placeholder="e.g. 5e110750ba0b8e66e... or http://malicious-site.com" style="padding: 0.8rem; border-radius: 4px; border: 1px solid #8b5cf6; background: rgba(0,0,0,0.3); color: #fff; flex-grow: 1; font-family: monospace;">
+                <button id="btn-detonate" class="btn btn-primary" onclick="detonateSandbox()" style="background: #8b5cf6; border-color: #7c3aed;">
+                    <span class="btn-icon">🔥</span> Detonate Target
                 </button>
-                <span id="config-status" class="config-status"></span>
+            </div>
+
+            <!-- Sandbox Results View (Hidden by default) -->
+            <div id="sandbox-results" style="margin-top: 1.5rem; display: none;">
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem;">
+                    <!-- Process Tree -->
+                    <div style="background: rgba(0,0,0,0.4); border: 1px solid var(--border-glass); border-radius: 4px; padding: 1rem;">
+                        <h3 style="margin-top: 0; font-size: 1rem; border-bottom: 1px solid var(--border-glass); padding-bottom: 0.5rem;">Process Tree Execution</h3>
+                        <div id="sandbox-process-tree" style="margin-top: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--text-secondary);">
+                            <div style="padding: 1rem; text-align: center;">Waiting for detonation...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Network & IOCs -->
+                    <div style="display: flex; flex-direction: column; gap: 1rem;">
+                        <div style="background: rgba(0,0,0,0.4); border: 1px solid var(--border-glass); border-radius: 4px; padding: 1rem;">
+                            <h3 style="margin-top: 0; font-size: 1rem; border-bottom: 1px solid var(--border-glass); padding-bottom: 0.5rem;">Network Connections</h3>
+                            <div id="sandbox-network" style="margin-top: 0.5rem; font-family: monospace; font-size: 0.8rem; color: var(--color-high);">
+                                No network activity detected.
+                            </div>
+                        </div>
+                        <div style="background: rgba(0,0,0,0.4); border: 1px solid var(--border-glass); border-radius: 4px; padding: 1rem; flex-grow: 1;">
+                            <h3 style="margin-top: 0; font-size: 1rem; border-bottom: 1px solid var(--border-glass); padding-bottom: 0.5rem;">Extracted IOCs</h3>
+                            <div id="sandbox-iocs" style="margin-top: 0.5rem; font-family: monospace; font-size: 0.8rem;">
+                                No IOCs available.
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
 
-        <!-- Multi-Cloud Storage Check Panel (NEW) -->
-        <section id="s3-check-panel" class="section config-panel hidden" style="margin-top: 1rem;">
+        <!-- Threat Hunting (Velociraptor Style) (NEW) -->
+        <section id="hunt-panel" class="section config-panel hidden" style="margin-top: 1rem; border-color: #3b82f6;">
             <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                 <div>
-                    <h2 class="section-title">☁️ Multi-Cloud Storage Security Check</h2>
-                    <p class="config-description">Enter a storage bucket/container name directly to verify if it is publicly accessible. Securely connects to AWS, Azure, or GCP via backend environment variables.</p>
+                    <h2 class="section-title" style="color: #60a5fa;">🔬 Advanced Threat Hunting (VQL)</h2>
+                    <p class="config-description">Run Velociraptor Query Language (VQL) across your entire endpoint fleet simultaneously.</p>
                 </div>
                 <div style="display: flex; gap: 0.5rem;">
-                    <button class="btn btn-sm btn-accent" onclick="toggleHistory()"><span class="btn-icon">🕒</span> History</button>
-                    <button class="btn btn-sm btn-outline" id="btn-export-storage" onclick="exportStorageReport()" style="display:none;"><span class="btn-icon">💾</span> Export JSON</button>
+                    <button class="btn btn-sm btn-outline" id="btn-export-hunt" style="display:none;"><span class="btn-icon">💾</span> Export JSON</button>
                 </div>
             </div>
             
             <div style="margin-bottom: 1rem; display: flex; gap: 1.5rem;">
                 <label class="radio-label">
-                    <input type="radio" name="cloud-provider" value="aws" checked> AWS S3
+                    <input type="radio" name="vql-template" value="process_creation" checked onclick="setVQLTemplate('process')"> Process Creation (Suspicious)
                 </label>
                 <label class="radio-label">
-                    <input type="radio" name="cloud-provider" value="azure"> Azure Blob 
+                    <input type="radio" name="vql-template" value="autoruns" onclick="setVQLTemplate('autorun')"> Registry Autoruns
                 </label>
                 <label class="radio-label">
-                    <input type="radio" name="cloud-provider" value="gcp"> Google Cloud Storage
+                    <input type="radio" name="vql-template" value="network" onclick="setVQLTemplate('net')"> Active Network Connections
                 </label>
             </div>
             
             <div class="s3-input-group" style="display: flex; gap: 1rem; align-items: center;">
-                <input type="text" id="s3-bucket-name" aria-label="Enter storage bucket or resource name" placeholder="my-test-bucket-name" style="padding: 0.8rem; border-radius: 4px; border: 1px solid var(--border-glass); background: var(--bg-primary); color: var(--text-primary); flex-grow: 1;">
-                <button id="btn-check-s3" class="btn btn-primary" onclick="checkS3Bucket()">
-                    <span class="btn-icon">☁️</span> Check Storage
+                <textarea id="vql-query" aria-label="Enter VQL Query" style="padding: 0.8rem; border-radius: 4px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.3); color: #fff; flex-grow: 1; font-family: 'JetBrains Mono', monospace; height: 80px;">SELECT * FROM Windows.System.Powershell.Execution() WHERE CommandLine =~ "Hidden|EncodedCommand"</textarea>
+                <button id="btn-run-hunt" class="btn btn-primary" onclick="runThreatHunt()" style="height: 80px;">
+                    <span class="btn-icon">⚡</span> Execute Hunt
                 </button>
-            </div>
-
-            <!-- History Drawer (Hidden by default) -->
-            <div id="storage-history-drawer" style="margin-top: 1rem; padding: 1rem; background: var(--bg-card); border: 1px solid var(--border-glass); border-radius: 4px; display: none;">
-                <h3 style="margin-top:0; font-size: 1rem; margin-bottom: 0.5rem;">Recent Scans</h3>
-                <div id="storage-history-list" style="font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.5rem; max-height: 150px; overflow-y: auto;">
-                    <div style="color:var(--text-secondary)">No scan history available.</div>
-                </div>
             </div>
             
             <!-- Result Container -->
-            <div id="s3-check-result" style="margin-top: 1rem; padding: 1rem; border-radius: 4px; background: rgba(0,0,0,0.2); display: none;"></div>
+            <div id="hunt-results" style="margin-top: 1rem; padding: 1rem; border-radius: 4px; background: rgba(0,0,0,0.4); border: 1px solid var(--border-glass); display: none;">
+                <div style="font-family: monospace; font-size: 0.85rem; color: var(--text-secondary);">Awaiting execution...</div>
+            </div>
         </section>
 
         <!-- System Telemetry Panel (NEW) -->
