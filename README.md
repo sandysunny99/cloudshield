@@ -1,201 +1,142 @@
-# 🛡️ CloudShield — Unified Cloud Security & EDR Platform
+# 🛡️ CloudShield — AI-Augmented Unified Cloud & Container Security Platform
 
-CloudShield is a production-grade **DevSecOps** platform providing real-time **Endpoint Detection & Response (EDR)**, **Cloud Security Posture Management (CSPM)**, **Container Vulnerability Scanning**, and **Threat Hunting** — all from a single, unified dashboard.
+CloudShield is an advanced, production-grade **DevSecOps** platform designed to provide a unified, single-pane-of-glass view for enterprise security. It bridges the gap between local endpoint security and cloud infrastructure by combining real-time **Endpoint Detection & Response (EDR)**, **Cloud Security Posture Management (CSPM)**, **Container Vulnerability Scanning**, and **Advanced Threat Hunting (VQL)** into one seamless ecosystem.
 
-Built with enterprise compliance in mind: **CIS Benchmarks**, **NIST 800-53**, **ISO 27001**, and **HIPAA** mapping are natively integrated.
+Built with enterprise compliance and modern architectures in mind, CloudShield natively maps all findings to **CIS Benchmarks**, **NIST 800-53**, **ISO 27001**, and **HIPAA**.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Detailed Architecture & Data Flow
 
+CloudShield employs a decoupled, highly scalable architecture with a serverless frontend and a robust Python REST API, supported by embedded databases and high-performance caching layers.
+
+```mermaid
+graph TD
+    subgraph Frontend [Vercel - Serverless Edge]
+        UI[Vite SPA Dashboard]
+        UI -->|REST / JSON| Gateway
+    end
+
+    subgraph Backend [Render - Gunicorn/Flask]
+        Gateway[API Gateway / Router]
+        Gateway --> CSPM[AWS/GCP Scanner]
+        Gateway --> Trivy[Container Vuln Scanner]
+        Gateway --> Sandbox[Malware Detonation]
+        Gateway --> Hunt[Threat Hunt Engine]
+        Gateway --> Metrics[SOC & Metrics Engine]
+        
+        CSPM -.-> Boto3[(Live AWS Configs)]
+        Trivy -.-> OSV[(OSV.dev / NVD)]
+    end
+
+    subgraph Endpoints [Local User Environments]
+        Agent[EDR Agent / Python psutil]
+        Agent -- HMAC Signed Telemetry --> Gateway
+    end
+
+    subgraph Storage [Embedded / Local]
+        Gateway --> DB[(SQLite / SQLAlchemy)]
+        Gateway --> Memory[(In-Memory Cache)]
+    end
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   CloudShield Dashboard                  │
-│         (Vite SPA — Vercel Production)                  │
-├────────────┬────────────┬────────────┬──────────────────┤
-│  SOC/SIEM  │   Cloud    │  Threat    │    Malware       │
-│  Overview  │  Security  │  Hunting   │    Sandbox       │
-│            │ ┌────────┐ │  (VQL)     │   (ANY.RUN)      │
-│  Attack    │ │ CSPM   │ │            │                  │
-│  Dashboard │ │ CtrVuln│ │            │                  │
-│  Agents    │ │ S3 Aud │ │            │                  │
-│            │ └────────┘ │            │                  │
-└─────┬──────┴─────┬──────┴─────┬──────┴────────┬─────────┘
-      │            │            │               │
-      ▼            ▼            ▼               ▼
-┌──────────────────────────────────────────────────────────┐
-│              Flask API (Gunicorn — Render)                │
-│  /api/scan/cloud  /api/scan/container  /api/hunt         │
-│  /api/agent-scan  /api/check-storage   /api/analyze/risk │
-│  /api/soc-timeline  /api/agent-status  /api/alerts       │
-├──────────────────────────────────────────────────────────┤
-│  SQLAlchemy (SQLite/Postgres)  │  Redis Pub/Sub         │
-│  Correlation Engine            │  Rate Limiter           │
-└──────────────────────────────────────────────────────────┘
-      ▲                              ▲
-      │ HMAC-signed telemetry        │ Trivy scan results
-┌─────┴──────┐               ┌──────┴───────┐
-│ EDR Agent  │               │ Trivy Server │
-│ (Endpoint) │               │ (Container)  │
-└────────────┘               └──────────────┘
-```
+
+### 🔄 The Data Flow
+1. **Endpoint Telemetry:** The local EDR agent (`cloudshield_agent.py`) actively monitors running processes. When an anomaly is detected (e.g., encoded PowerShell execution), it extracts the exact `exe_path` and `cmdline`, signs the payload via HMAC, and pushes it to the Render API.
+2. **Threat Hunting:** The API stores these events. When an analyst runs a VQL query from the dashboard, the backend parses the `SELECT * FROM ... WHERE ...` syntax, executes a regex-based keyword extraction, and queries the database to return real-time fleet matches.
+3. **Cloud Auditing:** When a CSPM scan is triggered, the backend utilizes `boto3` to securely pull live IAM configurations, S3 ACLs, and EC2 Security Group rules, evaluating them against embedded OPA-style policy rules.
 
 ---
 
-## 🌟 Key Features
+## 🛠️ Technology Stack
 
-### ☁️ Cloud Security (Unified Panel)
-- **Misconfiguration Scanner (CSPM)** — Analyze AWS/GCP/Azure configs against CIS policies with AI-powered remediation
-- **Container Vulnerability Scanner** — Scan Docker/OCI images for CVEs using Trivy
-- **S3 / Storage Audit** — Assess bucket ACLs, encryption status, and public exposure
-
-### 🔬 SOC & Threat Intelligence
-- **Threat Hunting (VQL)** — Advanced VQL syntax parser (e.g. `SELECT * FROM ... WHERE ...`) mapping over SQLite and OpenSearch.
-- **Attack Dashboard** — Real-time WAF edge blocks and spoofing origin tracking.
-- **SOC Event Stream** — Live security event log with severity-coded timeline.
-- **Security Alerts** — Correlated alerts from agent telemetry and cloud scans.
-
-### 💻 Endpoint Detection & Response
-- **EDR Agent** — Lightweight Python agent with rich execution path anomaly detection.
-- **HMAC-Signed Telemetry** — Cryptographically verified agent-to-backend communication.
-- **Fleet Management** — Monitor all connected endpoints with health scoring.
-- **Trivy Integration** — Background CVE scanning on agent hosts.
-
-### ☢️ Malware Sandbox
-- **Detonation Engine** — Analyze suspicious URLs, IPs, and file hashes
-- **Process Tree Mapping** — Visualize execution chains
-- **IOC Extraction** — Automatic indicator of compromise identification
+| Domain | Technologies Used |
+|--------|-------------------|
+| **Frontend** | Vanilla JS, HTML5, CSS3, Vite, Vercel |
+| **Backend API** | Python 3.10+, Flask, Gunicorn, Render |
+| **Database/ORM** | SQLite (Production Fallback), SQLAlchemy |
+| **Cloud Integration**| `boto3` (AWS API Integration) |
+| **Vulnerability DB** | Trivy, OSV.dev Database (National Vulnerability DB) |
+| **Endpoint Agent** | Python `psutil`, `requests`, `hmac` |
 
 ---
 
-## 🚀 Quick Start
+## 🌟 Comprehensive Feature Set
 
-### 1. Backend (Flask API)
+### ☁️ Cloud Security Posture Management (CSPM)
+- **Live AWS Auditing:** Dynamically fetches and evaluates real cloud configurations.
+- **IAM Policy Analysis:** Detects missing MFA requirements and overly permissive inline policies.
+- **S3 / Storage Audit:** Assesses bucket ACLs, encryption status, and public exposure risks.
+- **EC2 Security Groups:** Identifies unrestricted ingress rules (e.g., SSH open to `0.0.0.0/0`).
+
+### 🐳 Container Security
+- **Trivy / OSV Integration:** Scans Docker and OCI images for known vulnerabilities.
+- **CVSS Scoring:** Automatically categorizes vulnerabilities by Critical, High, Medium, and Low severities.
+
+### 🔬 SOC & Advanced Threat Intelligence
+- **Threat Hunting (VQL):** Advanced Velociraptor Query Language syntax parser mapping over SQLite. Execute queries like `SELECT * FROM Windows... WHERE CommandLine =~ "Hidden"` across the entire fleet.
+- **Attack Dashboard:** Real-time WAF edge block metrics, spoofing origin tracking, and rolling attack rate visualizations.
+- **SOC Event Stream:** Live, severity-coded security event log documenting system changes, detections, and automated mitigations.
+- **Security Alerts:** Correlated alerts combining agent telemetry and cloud scan results.
+
+### 💻 Endpoint Detection & Response (EDR)
+- **Local Agent:** Lightweight, non-intrusive Python agent mapping execution path anomalies.
+- **HMAC Authentication:** Cryptographically verified agent-to-backend communication preventing rogue telemetry injection.
+- **Fleet Management:** Monitor all connected endpoints with dynamic health scoring.
+
+### ☢️ Malware Sandbox Detonation
+- **Hybrid Detonation Engine:** Analyzes suspicious URLs, IPs, and file hashes. 
+- **Process Tree Mapping:** Visualizes execution chains (simulated in free-tier environments).
+- **IOC Extraction:** Automatic identification of Indicators of Compromise.
+
+---
+
+## 🚀 Deployment & Local Setup
+
+### 1. Live Production URLs
+- **Dashboard (Frontend):** [cloudshield-vtah.vercel.app](https://cloudshield-vtah.vercel.app)
+- **API (Backend):** [cloudshield-tya3.onrender.com](https://cloudshield-tya3.onrender.com)
+
+*Note: The repository includes a global `vercel.json` and a root `package.json` to properly intercept and route GitHub CI/CD pushes to the `/frontend` directory, preventing build crashes on duplicate Vercel hooks.*
+
+### 2. Local Setup: Backend (Flask API)
 ```bash
 cd backend
 pip install -r requirements.txt
 python app.py
 ```
-> API available at `http://localhost:5000`
+> The API will be available at `http://localhost:5000`
 
-### 2. Frontend (Vite)
+### 3. Local Setup: Frontend (Vite)
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-> Dashboard available at `http://localhost:5173`
+> The Dashboard will be available at `http://localhost:5173`
 
-### 3. EDR Agent
+### 4. Running the EDR Agent
 ```bash
 cd agent
 pip install psutil requests
 python cloudshield_agent.py
 ```
-> Agent auto-connects to the production backend. Set `CLOUDSHIELD_API_URL` to override.
-
-### 4. Full Agent (with HMAC + Trivy)
-```powershell
-cd agent
-$env:CLOUDSHIELD_API_KEY = "default-agent-key-123"
-python agent.py
-```
+> The agent auto-connects to the production backend by default. To point it to a local backend, set the `CLOUDSHIELD_API_URL` environment variable.
 
 ---
 
-## 🐳 Docker Compose
-
-```bash
-# Core services (API + Redis + Trivy)
-docker-compose up
-
-# Full SOC stack (OpenSearch + Wazuh + Suricata + Filebeat)
-docker-compose --profile prod up
-```
-
----
-
-## 🔧 Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | SQLite fallback |
-| `REDIS_URL` | Redis connection for pub/sub | `redis://localhost:6379` |
-| `CLOUDSHIELD_API_URL` | Agent target API endpoint | `https://cloudshield-tya3.onrender.com/api/agent-scan` |
-| `AGENT_KEYS` | Comma-separated trusted agent keys | `default-agent-key-123` |
-| `CF_API_TOKEN` | Cloudflare API token for edge bans | — |
-| `CF_ZONE_ID` | Cloudflare zone identifier | — |
-| `OPENSEARCH_URL` | OpenSearch endpoint (prod profile) | `http://opensearch:9200` |
-
----
-
-## 📡 API Endpoints
+## 📡 API Reference Guide
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/agent-scan` | HMAC-verified agent telemetry receiver |
-| `POST` | `/api/scan/cloud` | Cloud misconfiguration policy scan |
-| `POST` | `/api/scan/container` | Container image vulnerability scan |
-| `POST` | `/api/check-storage` | S3/GCS bucket security audit |
-| `POST` | `/api/hunt` | Threat hunting query execution |
-| `POST` | `/api/analyze/risk` | AI-powered risk analysis |
-| `GET`  | `/api/agent-status` | Connected agent fleet status |
-| `GET`  | `/api/security-metrics` | WAF attack metrics |
-| `GET`  | `/api/soc-timeline` | SOC event stream |
-| `GET`  | `/api/alerts` | Security alerts feed |
-| `GET`  | `/api/report/unified` | Full security posture report |
-
----
-
-## 🏛️ Compliance Frameworks
-
-All findings are automatically mapped to:
-- **CIS Controls v8** — Center for Internet Security
-- **NIST 800-53** — National Institute of Standards and Technology
-- **ISO 27001** — International Organization for Standardization
-- **HIPAA** — Health Insurance Portability and Accountability Act
-
----
-
-## 📂 Project Structure
-
-```
-cloudshield/
-├── backend/
-│   ├── app.py                    # Flask API (all endpoints)
-│   ├── requirements.txt          # Python dependencies
-│   ├── services/
-│   │   ├── correlation_engine.py # Event correlation & alerting
-│   │   ├── opensearch_service.py # Threat hunt query engine
-│   │   ├── sandbox_service.py    # Malware detonation
-│   │   └── threat_intel_service.py
-│   └── scripts/
-│       └── init_opensearch_ilm.py
-├── frontend/
-│   ├── index.html                # Dashboard UI
-│   ├── src/
-│   │   ├── dashboard.js          # Core JS logic
-│   │   └── style.css             # Design system
-│   └── vite.config.js
-├── agent/
-│   ├── agent.py                  # Full EDR agent (HMAC + Trivy)
-│   └── cloudshield_agent.py      # Lightweight process monitor
-└── docker-compose.yml            # Full stack orchestration
-```
-
----
-
-## 🌐 Live Deployment & CI/CD
-
-| Component | Architecture | URL |
-|-----------|--------------|-----|
-| **Dashboard** | `Vercel` (Serverless Edge) | [cloudshield-vtah.vercel.app](https://cloudshield-vtah.vercel.app) |
-| **API** | `Render` (Gunicorn/Flask) | [cloudshield-tya3.onrender.com](https://cloudshield-tya3.onrender.com) |
-
-> Note: A global `vercel.json` is included in the root directory to properly route GitHub push triggers into the `/frontend` directory. This ensures multiple hooked projects build successfully without path confusion.
+| `POST` | `/api/agent-scan` | Receives HMAC-verified agent telemetry. |
+| `POST` | `/api/scan/cloud` | Executes cloud misconfiguration policy scans. |
+| `POST` | `/api/scan/container`| Scans container images for vulnerabilities via OSV.dev. |
+| `POST` | `/api/hunt` | Executes VQL Threat Hunting queries. |
+| `POST` | `/api/analyze/risk` | Processes sandbox detonations. |
+| `GET`  | `/api/security-metrics`| Retrieves WAF attack metrics and rolling logs. |
+| `GET`  | `/api/soc-timeline` | Retrieves the live SOC event stream. |
 
 ---
 
 ## 📄 License
-
-MIT License — See [LICENSE](./LICENSE) for details.
+This project is licensed under the MIT License — See the [LICENSE](./LICENSE) file for details.
