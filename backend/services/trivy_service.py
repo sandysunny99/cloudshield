@@ -10,6 +10,9 @@ import subprocess
 import shutil
 import time
 from datetime import datetime
+import httpx
+import asyncio
+import os
 
 
 TRIVY_TIMEOUT = 180  # 3 minutes max per scan
@@ -20,58 +23,26 @@ def _trivy_available() -> bool:
     return shutil.which("trivy") is not None
 
 
-def scan_container_image(image_name: str) -> dict:
+async def scan_container_image(image_name: str) -> dict:
     """
-    Run: trivy image <image_name> --format json --quiet
-    Returns structured vulnerability report from real Trivy output.
+    Run async container scan using Trivy server to avoid blocking.
     """
     if not image_name or not isinstance(image_name, str):
         return {"status": "error", "message": "Invalid image name", "vulnerabilities": [], "summary": {}}
 
-    # Sanitize image name — only allow safe characters (BEFORE invoking any subprocess)
-    import re
-    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]{0,254}$', image_name.strip()):
-        return {"status": "error", "message": "Invalid image name format", "vulnerabilities": [], "summary": {}}
-
-    try:
-        if not _trivy_available():
-            return {"status": "error", "message": "Trivy CLI not installed"}
-
-        image_name = image_name.strip()
-        started_at = datetime.utcnow().isoformat() + "Z"
-
-        result = subprocess.run(
-            [
-                "trivy", "image",
-                image_name,
-                "--format", "json",
-                "--quiet",
-                "--severity", "CRITICAL,HIGH,MEDIUM,LOW",
-                "--scanners", "vuln"
-            ],
-            capture_output=True,
-            text=True,
-            timeout=TRIVY_TIMEOUT
-        )
-
-        if result.returncode not in (0, 1):
-            return {"status": "error", "message": f"Trivy scan failed (exit {result.returncode})"}
-
-        if not result.stdout.strip():
-            return {
-                "status": "completed",
-                "image": image_name,
-                "scanned_at": started_at,
-                "vulnerabilities": [],
-                "summary": {"total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0},
-                "message": "Scan complete. No vulnerabilities found."
-            }
-
-        data = json.loads(result.stdout)
-        return _parse_trivy_image_output(data, image_name, started_at)
-
-    except Exception as e:
-        return {"status": "error", "message": f"Scan execution error: {str(e)}"}
+    TRIVY_SERVER = os.environ.get("TRIVY_SERVER_URL", "http://trivy-server:4954")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(f"{TRIVY_SERVER}/trivy?image={image_name}", timeout=180)
+            if resp.status_code != 200:
+                return {"status": "error", "message": f"Trivy API error: {resp.status_code}"}
+            
+            data = resp.json()
+            # If the API returns 'Results' natively, we parse it
+            return _parse_trivy_image_output(data, image_name, datetime.utcnow().isoformat() + "Z")
+        except Exception as e:
+            return {"status": "error", "message": f"Async API scan failed: {str(e)}"}
 
 
 def scan_filesystem(path: str = None) -> dict:

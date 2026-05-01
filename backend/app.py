@@ -31,7 +31,8 @@ from flask import Flask, jsonify, request, abort, Response, stream_with_context
 AGENT_CACHE: dict = {}
 
 # SSE event bus — routes push events here, /api/stream reads from it
-_SSE_QUEUE: queue.Queue = queue.Queue(maxsize=500)
+import redis
+redis_client = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"))
 
 # -------------------------------------------------------------------
 # HMAC Signature Verification Decorator
@@ -576,6 +577,35 @@ def create_app():
     # -------------------------------------------------------------------
     # Usage Inside the Flask Route
     # -------------------------------------------------------------------
+    import requests
+
+    def check_ip_reputation(ip):
+        try:
+            if ip and (ip.startswith("192.") or ip.startswith("10.") or ip == "127.0.0.1"): return 0
+            url = "https://api.abuseipdb.com/api/v2/check"
+            headers = {"Key": os.environ.get("ABUSEIPDB_API_KEY", "demo"), "Accept": "application/json"}
+            r = requests.get(url, headers=headers, params={"ipAddress": ip, "maxAgeInDays": 90}, timeout=2)
+            if r.status_code == 200:
+                return r.json().get("data", {}).get("abuseConfidenceScore", 0)
+        except Exception: pass
+        return 0
+
+    def get_system_metrics():
+        try:
+            return requests.get("http://localhost:9100/metrics", timeout=1).text
+        except Exception: return ""
+
+    def parse_zeek_logs():
+        try:
+            with open("/opt/zeek/logs/current/conn.log") as f: return f.readlines()
+        except Exception: return []
+
+    def send_slack_alert(msg):
+        webhook = os.environ.get("SLACK_WEBHOOK_URL")
+        if webhook:
+            try: requests.post(webhook, json={"text": f"🚨 CloudShield Alert: {msg}"}, timeout=2)
+            except Exception: pass
+
     @app.route("/api/agent-scan", methods=["POST", "OPTIONS"])
     @limiter.limit("30 per minute")
     @verify_hmac   # <-- Signature check happens first
@@ -670,15 +700,31 @@ def create_app():
             elif net_risk >= sys_risk and net_risk > 0:
                 priority_fix = f"Close {len(ports)} unauthorized listening ports."
 
+            # Event Correlation Engine Hook
+            zeek_data = parse_zeek_logs()
+            sys_metrics = get_system_metrics()
+            
+            # Correlate: scan + login + spike
+            is_attack_chain = False
+            if threat_score > 50 and sys_risk > 50 and net_risk > 50:
+                is_attack_chain = True
+                risk_score = min(100, risk_score + 40)
+                priority_fix = "CRITICAL ATTACK CHAIN DETECTED: Immediately isolate host and block source IP."
+
             payload["risk_score"] = risk_score
             payload["risk_level"] = risk_level
             payload["risk_breakdown"] = {
                 "system": sys_risk, 
                 "network": net_risk, 
                 "cve": cve_risk,
-                "compliance": pol_risk
+                "compliance": pol_risk,
+                "threat_intel": threat_score
             }
             payload["priorityFix"] = priority_fix
+
+            # Alerting
+            if risk_score > 80 or is_attack_chain:
+                send_slack_alert(f"Host {hostname} (IP: {client_ip}) exceeded risk threshold. Score: {risk_score}. {priority_fix}")
 
             # Persist telemetry to database
             agent = Agent.query.get(agent_id)
@@ -698,9 +744,10 @@ def create_app():
             # Populate in-memory AGENT_CACHE for /api/report/unified
             AGENT_CACHE[agent_id] = {"timestamp": time.time(), "data": payload}
 
-            # Push real-time SSE event to connected dashboard clients
+            # Push real-time event to Persistent Stream (Redis Streams)
             try:
-                _SSE_QUEUE.put_nowait({
+                import json as _json
+                event_data = {
                     "type": "agent_update",
                     "data": {
                         "agentId": agent_id,
@@ -711,9 +758,12 @@ def create_app():
                         "ram": payload.get("ram_percent"),
                         "timestamp": time.time()
                     }
-                })
-            except queue.Full:
-                pass
+                }
+                redis_client.xadd('events_stream', {'payload': _json.dumps(event_data)}, maxlen=10000)
+                # Broadcast for immediate SSE clients
+                redis_client.publish('sse_channel', _json.dumps(event_data))
+            except Exception as e:
+                print(f"Redis publish/stream error: {e}")
 
             # Trigger SOC alert on compliance violations
             if len(docker_violations) > 0:
@@ -1021,7 +1071,7 @@ def create_app():
 
     @app.route("/api/scan/container", methods=["POST", "OPTIONS"])
     @limiter.limit("10 per minute")
-    def api_scan_container():
+    async def api_scan_container():
         """
         Trivy container image scan.
         POST body: { "image": "nginx:latest" }
@@ -1035,7 +1085,7 @@ def create_app():
         if not image:
             return jsonify({"status": "error", "message": "image field is required"}), 400
 
-        result = scan_container_image(image)
+        result = await scan_container_image(image)
 
         if result.get("status") == "completed":
             # Persist to DB (async-safe, non-blocking)
@@ -1403,18 +1453,18 @@ def create_app():
         """Server-Sent Events endpoint — pushes live agent + alert updates to dashboard."""
         def generate():
             yield "retry: 5000\n\n"  # client reconnects after 5s if disconnected
-            last_ping = time.time()
+            pubsub = redis_client.pubsub()
+            pubsub.subscribe('sse_channel')
+            import json as _json
+            
             while True:
-                try:
-                    event = _SSE_QUEUE.get(timeout=15)
-                    import json as _json
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=15.0)
+                if message is not None and message['type'] == 'message':
+                    event = _json.loads(message['data'])
                     payload = _json.dumps(event["data"], default=str)
                     yield f"event: {event['type']}\ndata: {payload}\n\n"
-                    last_ping = time.time()
-                except queue.Empty:
-                    if time.time() - last_ping > 15:
-                        yield ": keepalive\n\n"
-                        last_ping = time.time()
+                else:
+                    yield ": keepalive\n\n"
         return Response(
             stream_with_context(generate()),
             mimetype="text/event-stream",

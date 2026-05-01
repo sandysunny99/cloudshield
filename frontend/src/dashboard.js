@@ -1141,9 +1141,9 @@ function startSaaSPerformanceHub() {
         }
     }
 
-    // Always run initial hub fetch + 30s polling as reliable baseline
+    // Always run initial hub fetch + 3s polling as reliable baseline
     fetchDashboardHub(true);
-    _hubInterval = setInterval(() => fetchDashboardHub(true), 30000);
+    _hubInterval = setInterval(() => fetchDashboardHub(true), 3000);
 }
 
 // ── Global Exports ──
