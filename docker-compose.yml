@@ -58,6 +58,11 @@ services:
       - "OPENSEARCH_JAVA_OPTS=-Xms2048m -Xmx2048m"
     ports:
       - "9200:9200"
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
 
   wazuh-manager:
     image: wazuh/wazuh-manager:4.7.2
@@ -68,6 +73,11 @@ services:
       - "55000:55000"    # API
     depends_on:
       - opensearch
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+          cpus: "1.5"
 
   suricata:
     image: jasonish/suricata:latest
@@ -79,6 +89,11 @@ services:
       - NET_RAW
     volumes:
       - ./suricata/logs:/var/log/suricata
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
 
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.12.0

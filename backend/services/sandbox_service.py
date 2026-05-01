@@ -33,22 +33,21 @@ def detonate_target(target: str, timeout: int = 15) -> dict:
         time.sleep(3) # Simulate execution delay
         return _simulate_detonation(target, job_id)
 
-    # ── Execute inside Docker ──
+    # ── Execute inside Docker (HARDENED ISOLATION) ──
     try:
-        # 1. Run a container with no network access initially, or routed through a capture interface
-        # For this prototype, we'll run a basic curl/wget command to see what it does
-        
         target_sanitized = target.replace("'", "").replace('"', '').replace(";", "")
         
-        # We'll use strace inside the container to trace syscalls (process creation, network)
         cmd = [
             "docker", "run", "--rm", 
             "--name", f"sandbox-{job_id}",
-            "--network", "bridge", 
-            "--memory", "256m",
-            "--cpus", "0.5",
+            "--network", "none",           # Network disconnected to prevent C2/leaks
+            "--read-only",                 # Immutability
+            "--pids-limit=64",             # Fork bomb protection
+            "--memory", "256m",            # Memory limit
+            "--cpus", "0.5",               # CPU limit
+            "--security-opt", "no-new-privileges", # Prevent privilege escalation
             "alpine:latest",
-            "sh", "-c", f"apk add --no-cache curl strace && strace -f -e trace=execve,network curl -I -s -m 5 {target_sanitized}"
+            "sh", "-c", f"apk add --no-cache strace && strace -f -e trace=execve,network echo {target_sanitized}"
         ]
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)

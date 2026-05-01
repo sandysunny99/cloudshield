@@ -664,6 +664,35 @@ def create_app():
             
         return jsonify({"status": "success", "user": {"username": decoded["sub"], "role": decoded["role"]}})
 
+    from services.case_management_service import create_case, get_cases, get_case, update_case_status
+
+    @app.route("/api/cases", methods=["GET", "POST", "OPTIONS"])
+    def api_cases():
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+            title = body.get("title", "New Investigation")
+            desc = body.get("description", "")
+            case = create_case(title, desc)
+            return jsonify({"status": "success", "data": case}), 201
+        return jsonify({"status": "success", "data": get_cases()})
+
+    @app.route("/api/cases/<case_id>", methods=["GET", "PUT"])
+    def api_case_detail(case_id):
+        if request.method == "PUT":
+            body = request.get_json(silent=True) or {}
+            status = body.get("status")
+            updated = update_case_status(case_id, status)
+            if not updated:
+                return jsonify({"status": "error", "message": "Case not found or invalid status"}), 400
+            return jsonify({"status": "success", "data": updated})
+        
+        case = get_case(case_id)
+        if not case:
+            return jsonify({"status": "error", "message": "Case not found"}), 404
+        return jsonify({"status": "success", "data": case})
+
     @app.route("/api/sandbox/analyze", methods=["POST", "OPTIONS"])
     @limiter.limit("5 per minute")
     def api_sandbox_analyze():

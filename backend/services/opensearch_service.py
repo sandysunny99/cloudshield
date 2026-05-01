@@ -10,13 +10,21 @@ OPENSEARCH_URL = os.environ.get("OPENSEARCH_URL", "http://opensearch:9200")
 def execute_hunt_query(query: str) -> list:
     """
     Executes a threat hunting query against OpenSearch/Wazuh logs.
-    If OpenSearch is unreachable (e.g. running locally without prod profile),
-    returns simulated match data based on the query pattern.
+    Includes guardrails against expensive wildcard queries and query injection.
     """
-    # 1. Map VQL-like query to Elasticsearch DSL
+    # Guardrail: Whitelist of allowed fields for searching
+    ALLOWED_FIELDS = ["process.name", "host.name", "event.category", "registry.path", "network.protocol"]
+    
+    # 1. Map VQL-like query to Elasticsearch DSL safely
     es_query = {"query": {"match_all": {}}}
     
     query_lower = query.lower()
+    
+    # Prevent expensive unanchored wildcards
+    if query_lower.startswith("*") or ".*" in query_lower:
+        logger.error("Threat Hunt rejected: Expensive wildcard patterns are not allowed.")
+        return [{"endpoint": "API", "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), "detail": "Query rejected by guardrails (expensive wildcard)"}]
+
     if "powershell" in query_lower or "encodedcommand" in query_lower:
         es_query = {"query": {"match": {"process.name": "powershell.exe"}}}
     elif "autorun" in query_lower:
