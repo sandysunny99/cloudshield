@@ -23,7 +23,7 @@ SUSPICIOUS_KEYWORDS = [
 def scan_processes():
     """Scan all running processes for behavioral anomalies."""
     events = []
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'username']):
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'exe', 'username']):
         try:
             cmdline = proc.info['cmdline']
             if not cmdline:
@@ -41,15 +41,16 @@ def scan_processes():
                         score += 30
                         tactics.append("Execution")
                         
-            if score >= 30:
-                events.append({
-                    "process_name": proc.info['name'],
-                    "pid": proc.info['pid'],
-                    "cmdline": cmd_str,
-                    "user": proc.info['username'],
-                    "score": score,
-                    "tactics": tactics
-                })
+                if score >= 30:
+                    events.append({
+                        "process_name": proc.info['name'],
+                        "pid": proc.info['pid'],
+                        "cmdline": cmd_str,
+                        "exe_path": proc.info.get('exe', 'unknown_path'),
+                        "user": proc.info['username'],
+                        "score": score,
+                        "tactics": tactics
+                    })
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
             
@@ -72,7 +73,7 @@ def run_agent():
                     "source": "cloudshield-agent",
                     "hostname": HOSTNAME,
                     "type": "process_anomaly",
-                    "detail": anomaly['cmdline'],
+                    "detail": f"{anomaly.get('exe_path', '')} | {anomaly['cmdline']}",
                     "score": anomaly['score'],
                     "tactics": anomaly['tactics']
                 }

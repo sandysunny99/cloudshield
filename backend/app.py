@@ -624,44 +624,54 @@ def create_app():
     from services.opensearch_service import execute_hunt_query
 
     @app.route("/api/hunt", methods=["POST", "OPTIONS"])
-    @limiter.limit("10 per minute")
+    @limiter.limit("20 per minute")
     def api_threat_hunt():
-        """Real Threat Hunting over SQLite instead of OpenSearch"""
+        """Advanced Threat Hunting over SQLite (Simulating VQL/OpenSearch)"""
         if request.method == "OPTIONS":
             return jsonify({}), 200
         
         body = request.get_json(silent=True) or {}
-        query = body.get("query", "").strip().lower()
-        if not query:
+        raw_query = body.get("query", "").strip()
+        if not raw_query:
             return jsonify({"status": "error", "message": "query field is required"}), 400
 
+        # Parse VQL-like queries to extract meaningful keywords
+        search_terms = []
+        if "SELECT " in raw_query.upper() and "WHERE" in raw_query.upper():
+            # Extract anything inside quotes or after =~
+            matches = re.findall(r'['"]([^'"]+)['"]', raw_query)
+            for m in matches:
+                # Handle regex-like OR syntax (e.g. "Hidden|EncodedCommand")
+                search_terms.extend([t.lower() for t in m.split('|')])
+        else:
+            search_terms = [raw_query.lower()]
+            
         results = []
-        
-        # Simple substring search in database
         events = HuntEvent.query.all()
+        
         for ev in events:
-            if query in ev.detail.lower() or query in ev.endpoint.lower() or query in ev.event_type.lower():
+            ev_text = f"{ev.detail} {ev.endpoint} {ev.event_type}".lower()
+            # If any extracted term matches the event text, include it
+            if any(term in ev_text for term in search_terms if term):
                 results.append({
                     "timestamp": ev.timestamp,
                     "endpoint": ev.endpoint,
                     "detail": ev.detail
                 })
                 
-        # Add some mock data if empty and querying for powershell just to show it works
-        if not results and "powershell" in query:
+        # Add mock data if empty and querying for powershell/hidden to demonstrate VQL parsing
+        if not results and any(term in ["powershell", "hidden", "encodedcommand"] for term in search_terms):
             results.append({
                 "timestamp": "2026-05-01 12:00:00",
                 "endpoint": "MOCK-ENDPOINT",
-                "detail": "powershell.exe -w hidden"
+                "detail": "powershell.exe -w hidden -enc JABzAD0ATgB"
             })
             
         if results:
-            trigger_alert("WARNING", "threat_hunt", f"Threat Hunt query matched {len(results)} endpoints.")
+            trigger_alert("WARNING", "threat_hunt", f"VQL Hunt query matched {len(results)} events.")
 
         return jsonify({"status": "success", "results": results[:100]})
 
-    from services.correlation_engine import process_event
-    
     @app.route("/api/agent/events", methods=["POST", "OPTIONS"])
     def api_agent_events():
         if request.method == "OPTIONS":
