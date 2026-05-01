@@ -32,7 +32,12 @@ AGENT_CACHE: dict = {}
 
 # SSE event bus — routes push events here, /api/stream reads from it
 import redis
-redis_client = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"))
+redis_client = redis.Redis.from_url(
+    os.environ.get("REDIS_URL", "redis://localhost:6379"),
+    decode_responses=True,
+    socket_connect_timeout=2,
+    socket_timeout=2
+)
 
 # -------------------------------------------------------------------
 # HMAC Signature Verification Decorator
@@ -575,36 +580,40 @@ def create_app():
             return jsonify({"status": "error", "message": "Internal error"}), 500
 
     # -------------------------------------------------------------------
-    # Usage Inside the Flask Route
+    # Threat Intelligence + External Integrations
     # -------------------------------------------------------------------
-    import requests
-
-    def check_ip_reputation(ip):
-        try:
-            if ip and (ip.startswith("192.") or ip.startswith("10.") or ip == "127.0.0.1"): return 0
-            url = "https://api.abuseipdb.com/api/v2/check"
-            headers = {"Key": os.environ.get("ABUSEIPDB_API_KEY", "demo"), "Accept": "application/json"}
-            r = requests.get(url, headers=headers, params={"ipAddress": ip, "maxAgeInDays": 90}, timeout=2)
-            if r.status_code == 200:
-                return r.json().get("data", {}).get("abuseConfidenceScore", 0)
-        except Exception: pass
-        return 0
-
-    def get_system_metrics():
-        try:
-            return requests.get("http://localhost:9100/metrics", timeout=1).text
-        except Exception: return ""
-
-    def parse_zeek_logs():
-        try:
-            with open("/opt/zeek/logs/current/conn.log") as f: return f.readlines()
-        except Exception: return []
+    from services.threat_intel_service import enrich_ip, enrich_cve
+    from services.alert_service import trigger_alert, get_recent_alerts
 
     def send_slack_alert(msg):
         webhook = os.environ.get("SLACK_WEBHOOK_URL")
         if webhook:
-            try: requests.post(webhook, json={"text": f"🚨 CloudShield Alert: {msg}"}, timeout=2)
+            try:
+                import requests as _req
+                _req.post(webhook, json={"text": f"🚨 CloudShield Alert: {msg}"}, timeout=2)
             except Exception: pass
+        # Always trigger internal alert system
+        trigger_alert("CRITICAL", "agent-scan", msg)
+
+    @app.route("/api/threat-intel/<ip>", methods=["GET"])
+    @limiter.limit("30 per minute")
+    def api_threat_intel(ip):
+        """Real-time IP threat enrichment using Shodan, AbuseIPDB, GreyNoise, OTX, VirusTotal."""
+        result = enrich_ip(ip)
+        return jsonify({"status": "success", "data": result})
+
+    @app.route("/api/cve/<cve_id>", methods=["GET"])
+    @limiter.limit("20 per minute")
+    def api_cve_lookup(cve_id):
+        """Real-time CVE enrichment from NIST NVD."""
+        result = enrich_cve(cve_id)
+        return jsonify({"status": "success", "data": result})
+
+    @app.route("/api/alerts", methods=["GET"])
+    def api_alerts():
+        """Return recent system alerts."""
+        limit = min(int(request.args.get("limit", 20)), 50)
+        return jsonify({"status": "success", "alerts": get_recent_alerts(limit)})
 
     @app.route("/api/agent-scan", methods=["POST", "OPTIONS"])
     @limiter.limit("30 per minute")
@@ -700,13 +709,15 @@ def create_app():
             elif net_risk >= sys_risk and net_risk > 0:
                 priority_fix = f"Close {len(ports)} unauthorized listening ports."
 
-            # Event Correlation Engine Hook
-            zeek_data = parse_zeek_logs()
-            sys_metrics = get_system_metrics()
-            
-            # Correlate: scan + login + spike
+            # ── Threat Intelligence Enrichment ──
+            # Query real OSINT sources for the agent's source IP
+            client_ip = get_cf_ip()
+            intel = enrich_ip(client_ip)
+            threat_score = intel.get("threat_score", 0)
+
+            # Correlate: threat intel + system risk + network exposure
             is_attack_chain = False
-            if threat_score > 50 and sys_risk > 50 and net_risk > 50:
+            if threat_score > 50 and sys_risk > 20 and net_risk > 20:
                 is_attack_chain = True
                 risk_score = min(100, risk_score + 40)
                 priority_fix = "CRITICAL ATTACK CHAIN DETECTED: Immediately isolate host and block source IP."
@@ -720,10 +731,12 @@ def create_app():
                 "compliance": pol_risk,
                 "threat_intel": threat_score
             }
+            payload["threat_intel"] = intel
             payload["priorityFix"] = priority_fix
 
-            # Alerting
+            # Alerting — fires on high risk or confirmed attack chain
             if risk_score > 80 or is_attack_chain:
+                hostname = payload.get("hostname", "unknown")
                 send_slack_alert(f"Host {hostname} (IP: {client_ip}) exceeded risk threshold. Score: {risk_score}. {priority_fix}")
 
             # Persist telemetry to database
@@ -1071,11 +1084,11 @@ def create_app():
 
     @app.route("/api/scan/container", methods=["POST", "OPTIONS"])
     @limiter.limit("10 per minute")
-    async def api_scan_container():
+    def api_scan_container():
         """
         Trivy container image scan.
         POST body: { "image": "nginx:latest" }
-        Returns real CVE findings from Trivy.
+        Returns real CVE findings via Trivy Server, Trivy CLI, or OSV.dev fallback.
         """
         print("DEPLOY CHECK: NEW VERSION ACTIVE", flush=True)
         if request.method == "OPTIONS":
@@ -1085,7 +1098,7 @@ def create_app():
         if not image:
             return jsonify({"status": "error", "message": "image field is required"}), 400
 
-        result = await scan_container_image(image)
+        result = scan_container_image(image)
 
         if result.get("status") == "completed":
             # Persist to DB (async-safe, non-blocking)

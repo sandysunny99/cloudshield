@@ -5,7 +5,12 @@ import requests
 
 import redis
 
-redis_client = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"))
+redis_client = redis.Redis.from_url(
+    os.environ.get("REDIS_URL", "redis://localhost:6379"),
+    decode_responses=True,
+    socket_connect_timeout=2,
+    socket_timeout=2
+)
 SLACK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 
 def check_ip_score(ip):
@@ -28,8 +33,11 @@ def process_event(data):
         "timestamp": time.time()
     }
     
-    # Send to UI via pubsub
-    redis_client.publish("live", json.dumps(result))
+    # Send to UI via pubsub — must match SSE subscriber channel + format
+    redis_client.publish("sse_channel", json.dumps({
+        "type": "agent_update",
+        "data": result
+    }))
     
     # Alerting
     if risk > 70 and SLACK_URL:
