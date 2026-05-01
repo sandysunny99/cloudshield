@@ -91,8 +91,16 @@ def _evaluate_rules(hostname: str, ip: str) -> dict:
         total_score += 80 * e["decay_multiplier"]
         tactics.add("Credential Access")
         
+    # Rule 6: Sandbox HTTP Proxy Beaconing
+    sandbox_beacons = [e for e in recent_events if e["source"] == "sandbox" and e["type"] == "sandbox_http_beacon"]
+    for e in sandbox_beacons:
+        total_score += 40 * e["decay_multiplier"]
+        tactics.add("Command and Control")
+        if ti_score > 80:
+            total_score += 50 * e["decay_multiplier"] # Bonus for beaconing to highly malicious IP
+
     # Multi-Stage Tracking Example (Sequence: PS Download -> C2)
-    if wazuh_ps_dl and suri_c2:
+    if wazuh_ps_dl and (suri_c2 or sandbox_beacons):
         total_score += 50 # Bonus for sequence match
         
     if total_score >= 80:

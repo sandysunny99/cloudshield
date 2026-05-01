@@ -1595,7 +1595,8 @@ startSaaSPerformanceHub();
          d o c u m e n t . g e t E l e m e n t B y I d ( " h u n t - p a n e l " ) . c l a s s L i s t . r e m o v e ( " h i d d e n " ) ; 
  } ) ; 
  
-  
+ 
+ 
  
 // ── ANY.RUN / Malware Sandbox Integration (Real Backend) ──
 window.openSandbox = function() {
@@ -1786,6 +1787,12 @@ function showAlertDrillDown(alertData) {
         <div style="margin-bottom:1rem;">
             <strong>Tactics:</strong>
             <div style="margin-top:0.5rem;">${tacticsHtml}</div>
+        </div>
+                <div style="margin-bottom:1rem;">
+            <strong>Network Activity:</strong>
+            <div style="margin-top:0.5rem; color:var(--text-bright); font-family:monospace; font-size:0.8rem; background:rgba(0,0,0,0.3); padding:0.5rem; border-left: 2px solid var(--color-med);">
+                ${(alertData.network || []).map(n => escapeHtml(n)).join("<br>") || "<span style='color:var(--text-muted)'>No captured network events.</span>"}
+            </div>
         </div>
         <div>
             <strong>Raw JSON:</strong>

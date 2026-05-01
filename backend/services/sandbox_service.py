@@ -10,6 +10,7 @@ import time
 import json
 import logging
 import subprocess
+import shutil
 
 logger = logging.getLogger("cloudshield.sandbox")
 
@@ -37,22 +38,38 @@ def detonate_target(target: str, timeout: int = 15) -> dict:
     try:
         target_sanitized = target.replace("'", "").replace('"', '').replace(";", "")
         
+        # We use a custom shell script to enforce iptables to mitmproxy and then execute
+        sandbox_script = f"""
+        # Force traffic to proxy (if running as root inside container)
+        export HTTP_PROXY=http://cloudshield-mitmproxy:8080
+        export HTTPS_PROXY=http://cloudshield-mitmproxy:8080
+        apk add --no-cache strace curl >/dev/null 2>&1
+        strace -f -e trace=execve echo {target_sanitized} >/dev/null
+        curl -s -I {target_sanitized} >/dev/null 2>&1
+        """
+        
         cmd = [
             "docker", "run", "--rm", 
             "--name", f"sandbox-{job_id}",
-            "--network", "none",           # Network disconnected to prevent C2/leaks
+            "--network", "sandbox_net",    # Connected to proxy net
             "--read-only",                 # Immutability
             "--pids-limit=64",             # Fork bomb protection
             "--memory", "256m",            # Memory limit
             "--cpus", "0.5",               # CPU limit
             "--security-opt", "no-new-privileges", # Prevent privilege escalation
             "alpine:latest",
-            "sh", "-c", f"apk add --no-cache strace && strace -f -e trace=execve,network echo {target_sanitized}"
+            "sh", "-c", sandbox_script
         ]
+        
+        # Clear old proxy logs for this job run (if we were using job-specific files, but we read the tail for prototype)
+        log_file = "backend/logs/proxy_traffic.log"
+        if os.path.exists(log_file):
+            with open(log_file, "w") as f:
+                f.write("")
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         
-        return _parse_strace_output(result.stderr, target, job_id)
+        return _parse_sandbox_output(result.stderr, target, job_id, log_file)
         
     except subprocess.TimeoutExpired:
         subprocess.run(["docker", "kill", f"sandbox-{job_id}"], capture_output=True)
@@ -61,8 +78,8 @@ def detonate_target(target: str, timeout: int = 15) -> dict:
         logger.error(f"Sandbox execution failed: {e}")
         return _simulate_detonation(target, job_id)
 
-def _parse_strace_output(strace_log: str, target: str, job_id: str) -> dict:
-    """Extract processes and network IOCs from raw strace."""
+def _parse_sandbox_output(strace_log: str, target: str, job_id: str, proxy_log_path: str) -> dict:
+    """Extract processes from strace and network IOCs from mitmproxy logs."""
     processes = []
     network = []
     iocs = []
@@ -70,8 +87,22 @@ def _parse_strace_output(strace_log: str, target: str, job_id: str) -> dict:
     for line in strace_log.splitlines():
         if "execve" in line:
             processes.append(line.split("(")[0] + line.split('"')[1] if '"' in line else "process_created")
-        if "connect" in line or "socket" in line:
-            network.append(line)
+            
+    # Read network traffic from mitmproxy logger
+    if os.path.exists(proxy_log_path):
+        with open(proxy_log_path, "r") as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    network.append(f"{data['method']} {data['host']}{data['path']}")
+                    if data['host'] not in iocs:
+                        iocs.append(data['host'])
+                    
+                    # Feed to correlation engine directly
+                    from services.correlation_engine import process_event
+                    process_event("sandbox", data["event_type"], f"Sandbox Outbound: {data['host']}", ip=data['host'])
+                except:
+                    pass
             
     return {
         "job_id": job_id,
@@ -106,4 +137,3 @@ def _simulate_detonation(target: str, job_id: str) -> dict:
         ]
     }
 
-import shutil
