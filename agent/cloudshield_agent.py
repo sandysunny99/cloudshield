@@ -8,7 +8,9 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cloudshield.agent")
 
-API_URL = "http://localhost:5000/api/agent/events"
+import os
+
+API_URL = os.environ.get("CLOUDSHIELD_API_URL", "https://cloudshield-tya3.onrender.com/api/agent/events")
 HOSTNAME = socket.gethostname()
 
 # Suspicious keywords to look for in command lines
@@ -83,6 +85,24 @@ def run_agent():
         except Exception as e:
             logger.error(f"Agent error: {e}")
             
+        
+        # Send heartbeat to keep agent online in UI
+        try:
+            heartbeat_payload = {
+                "agentId": HOSTNAME,
+                "agentVersion": "3.0.0-EDR",
+                "hostname": HOSTNAME,
+                "os": "Windows",
+                "cpu_percent": 0,
+                "ram_percent": 0,
+                "top_processes": [],
+                "open_ports": [],
+                "vulnerabilities": []
+            }
+            requests.post(API_URL.replace('/agent/events', '/agent-scan'), json=heartbeat_payload, timeout=2)
+        except Exception:
+            pass
+
         time.sleep(5)  # Scan every 5 seconds
 
 if __name__ == "__main__":
